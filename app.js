@@ -18,9 +18,7 @@ function App() {
     setIndex(0);
 
     if (!file.name.toLowerCase().endsWith(".docx")) {
-      setIssues([
-        "Only .docx files are supported right now. PDF support should come later."
-      ]);
+      setIssues(["Only .docx files are supported right now. PDF support should come later."]);
       setBlocked(true);
       return;
     }
@@ -92,9 +90,12 @@ function App() {
     return (
       cleaned.includes("do not write on this test") ||
       cleaned.includes("class set") ||
+      cleaned.includes("chemical reactions test") ||
+      cleaned.includes("aca chemistry") ||
       cleaned.includes("directions:") ||
       cleaned.includes("answer the following questions") ||
       cleaned.includes("scantron") ||
+      cleaned.includes("free response question") ||
       cleaned.includes("more on back")
     );
   }
@@ -104,7 +105,7 @@ function App() {
   }
 
   function isChoiceLine(line) {
-    return /^\s*[A-Da-d][\.\)]\s+/.test(line);
+    return /^\s*[A-Da-d][\.\)]\s*/.test(line);
   }
 
   function isAnswerLine(line) {
@@ -112,7 +113,7 @@ function App() {
   }
 
   function normalizeChoiceLabel(line) {
-    const match = line.match(/^\s*([A-Da-d])[\.\)]\s+(.*)$/);
+    const match = line.match(/^\s*([A-Da-d])[\.\)]\s*(.*)$/);
 
     if (!match) return null;
 
@@ -132,6 +133,37 @@ function App() {
   function extractAnswerFromLine(line) {
     const match = line.match(/^ANSWER\s*:\s*([A-Da-d])/i);
     return match ? match[1].toUpperCase() : null;
+  }
+
+  function normalizeQuestionBlock(block) {
+    if (!block || block.length === 0) return block;
+
+    const firstLine = block[0];
+    const rest = block.slice(1).map(normalizeLine).filter(Boolean);
+
+    const hasLabeledChoices = rest.some(line => isChoiceLine(line));
+
+    if (hasLabeledChoices) {
+      return [firstLine, ...rest];
+    }
+
+    if (rest.length < 4) {
+      return [firstLine, ...rest];
+    }
+
+    const possibleChoices = rest.slice(-4);
+    const possiblePromptLines = rest.slice(0, -4);
+    const labels = ["A", "B", "C", "D"];
+
+    const normalizedChoices = possibleChoices.map((choice, index) => {
+      return `${labels[index]}. ${choice}`;
+    });
+
+    return [
+      firstLine,
+      ...possiblePromptLines,
+      ...normalizedChoices
+    ];
   }
 
   function parseQuestionBlock(block, foundIssues) {
@@ -356,6 +388,8 @@ function App() {
         currentBlock = [line];
       } else if (currentBlock.length > 0) {
         currentBlock.push(line);
+      } else if (blocks.length === 0 && line.length > 10) {
+        currentBlock = [`1. ${line}`];
       }
     }
 
@@ -374,6 +408,7 @@ function App() {
     }
 
     const parsed = blocks
+      .map(block => normalizeQuestionBlock(block))
       .map(block => parseQuestionBlock(block, foundIssues))
       .filter(Boolean);
 
