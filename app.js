@@ -6,6 +6,7 @@ function App() {
   const [index, setIndex] = useState(0);
   const [issues, setIssues] = useState([]);
   const [blocked, setBlocked] = useState(false);
+  const [selectedAnswers, setSelectedAnswers] = useState({});
 
   const REQUIRED_LABELS = ["A", "B", "C", "D"];
 
@@ -15,6 +16,7 @@ function App() {
     if (!file) return;
 
     setQuestions([]);
+    setSelectedAnswers({});
     setIndex(0);
 
     if (!file.name.toLowerCase().endsWith(".docx")) {
@@ -141,9 +143,9 @@ function App() {
     const firstLine = block[0];
     const rest = block.slice(1).map(normalizeLine).filter(Boolean);
 
-    const hasLabeledChoices = rest.some(line => isChoiceLine(line));
+    const labeledChoices = rest.filter(line => /^[A-Da-d][\.\)]\s*/.test(line));
 
-    if (hasLabeledChoices) {
+    if (labeledChoices.length >= 4) {
       return [firstLine, ...rest];
     }
 
@@ -156,7 +158,7 @@ function App() {
     const labels = ["A", "B", "C", "D"];
 
     const normalizedChoices = possibleChoices.map((choice, index) => {
-      return `${labels[index]}. ${choice}`;
+      return `${labels[index]}. ${choice.replace(/^[A-Da-d][\.\)]\s*/, "")}`;
     });
 
     return [
@@ -364,6 +366,7 @@ function App() {
 
     if (!cleaned) {
       setQuestions([]);
+      setSelectedAnswers({});
       setIssues(["No text was provided. Paste text or upload a DOCX file first."]);
       setBlocked(true);
       setIndex(0);
@@ -399,6 +402,7 @@ function App() {
 
     if (blocks.length === 0) {
       setQuestions([]);
+      setSelectedAnswers({});
       setIssues([
         "No valid numbered questions were found. Questions must begin like: 1. Question text"
       ]);
@@ -417,6 +421,7 @@ function App() {
 
     if (validQuestions.length === 0) {
       setQuestions([]);
+      setSelectedAnswers({});
       setIssues([
         ...foundIssues,
         "No questions were allowed into Quiz/Tutor because none passed validation."
@@ -437,9 +442,21 @@ function App() {
     const randomized = shuffleArray(safeDisplayQuestions(validQuestions));
 
     setQuestions(randomized);
+    setSelectedAnswers({});
     setIssues(foundIssues);
     setBlocked(invalidCount > 0);
     setIndex(0);
+  }
+
+  function selectAnswer(label) {
+    const currentQuestion = questions[index];
+
+    if (!currentQuestion) return;
+
+    setSelectedAnswers(prev => ({
+      ...prev,
+      [currentQuestion.sourceNumber]: label
+    }));
   }
 
   function nextQuestion() {
@@ -545,28 +562,22 @@ function App() {
         React.createElement(
           "div",
           { className: "space-y-2" },
-          REQUIRED_LABELS.map(label =>
-            React.createElement(
-              "div",
+          REQUIRED_LABELS.map(label => {
+            const isSelected =
+              selectedAnswers[currentQuestion.sourceNumber] === label;
+
+            return React.createElement(
+              "button",
               {
                 key: label,
-                className: "border rounded p-2"
+                className: isSelected
+                  ? "w-full text-left border rounded p-2 bg-blue-100 border-blue-500"
+                  : "w-full text-left border rounded p-2 bg-white hover:bg-gray-100",
+                onClick: () => selectAnswer(label)
               },
               `${label}. ${currentQuestion.choices[label]}`
-            )
-          )
-        ),
-
-        React.createElement(
-          "div",
-          { className: "mt-4 text-sm text-gray-500" },
-          `Internal source question: ${currentQuestion.sourceNumber}`
-        ),
-
-        React.createElement(
-          "div",
-          { className: "mt-4 text-sm text-gray-500" },
-          `Correct answer stored internally: ${currentQuestion.answer}`
+            );
+          })
         ),
 
         React.createElement(
