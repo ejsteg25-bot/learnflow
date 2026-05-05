@@ -107,51 +107,8 @@ function App() {
     return /^\s*[A-Da-d][\.\)]\s*/.test(line);
   }
 
-  function isStrictChoiceLine(line) {
-    return /^\s*[A-Da-d][\.\)]\s+/.test(line);
-  }
-
   function isAnswerLine(line) {
     return /^ANSWER\s*:/i.test(line);
-  }
-
-  function splitInlineChoices(line) {
-    const normalized = normalizeLine(line);
-    const regex = /(?:^|\s)([A-Da-d])[\.\)]\s*/g;
-    const matches = [];
-    let match;
-
-    while ((match = regex.exec(normalized)) !== null) {
-      matches.push({
-        index: match.index + (match[0].startsWith(" ") ? 1 : 0),
-        label: match[1].toUpperCase()
-      });
-    }
-
-    if (matches.length <= 1) {
-      return [normalized];
-    }
-
-    const parts = [];
-
-    for (let i = 0; i < matches.length; i++) {
-      const start = matches[i].index;
-      const end = i + 1 < matches.length ? matches[i + 1].index : normalized.length;
-      parts.push(normalized.slice(start, end).trim());
-    }
-
-    return parts.filter(Boolean);
-  }
-
-  function expandInlineChoiceLines(lines) {
-    const expanded = [];
-
-    for (const line of lines) {
-      const parts = splitInlineChoices(line);
-      expanded.push(...parts);
-    }
-
-    return expanded;
   }
 
   function normalizeChoiceLabel(line) {
@@ -181,44 +138,51 @@ function App() {
     if (!block || block.length === 0) return block;
 
     const firstLine = block[0];
-    const rest = expandInlineChoiceLines(
-      block.slice(1).map(normalizeLine).filter(Boolean)
-    );
+    const rest = block.slice(1).map(normalizeLine).filter(Boolean);
 
-    const labeledChoices = rest.filter(line => isStrictChoiceLine(line));
+    const choiceMap = {};
+    const promptLines = [];
 
-    const normalizedLabels = labeledChoices.map(line =>
-      line.trim().charAt(0).toUpperCase()
-    );
+    for (const line of rest) {
+      const match = line.match(/^([A-Da-d])[\.\)]\s*(.*)$/);
 
-    if (
-      labeledChoices.length === 4 &&
-      normalizedLabels.join("") === "ABCD"
-    ) {
-      return [firstLine, ...rest];
+      if (match) {
+        const label = match[1].toUpperCase();
+        const choiceText = match[2].trim();
+
+        if (!choiceMap[label]) {
+          choiceMap[label] = `${label}. ${choiceText}`;
+        }
+
+        continue;
+      }
+
+      promptLines.push(line);
     }
 
-    if (labeledChoices.length >= 4) {
-      return [firstLine, ...rest];
-    }
+    const labelsFound = Object.keys(choiceMap);
 
-    if (labeledChoices.length > 0) {
-      return [firstLine, ...rest];
+    if (labelsFound.length > 0) {
+      return [
+        firstLine,
+        ...promptLines,
+        ...REQUIRED_LABELS
+          .filter(label => choiceMap[label])
+          .map(label => choiceMap[label])
+      ];
     }
 
     if (rest.length >= 4) {
       const possibleChoices = rest.slice(-4);
       const possiblePromptLines = rest.slice(0, -4);
-      const labels = ["A", "B", "C", "D"];
-
-      const normalizedChoices = possibleChoices.map((choice, index) => {
-        return `${labels[index]}. ${choice.replace(/^[A-Da-d][\.\)]\s*/, "")}`;
-      });
 
       return [
         firstLine,
         ...possiblePromptLines,
-        ...normalizedChoices
+        `A. ${possibleChoices[0]}`,
+        `B. ${possibleChoices[1]}`,
+        `C. ${possibleChoices[2]}`,
+        `D. ${possibleChoices[3]}`
       ];
     }
 
@@ -247,6 +211,7 @@ function App() {
 
       if (isChoiceLine(line)) {
         readingChoices = true;
+
         const choice = normalizeChoiceLabel(line);
 
         if (!choice) {
