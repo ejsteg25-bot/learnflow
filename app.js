@@ -110,6 +110,10 @@ function App() {
     return /^\s*[A-Da-d][\.\)]\s*/.test(line);
   }
 
+  function isStrictChoiceLine(line) {
+    return /^\s*[A-Da-d][\.\)]\s+/.test(line);
+  }
+
   function isAnswerLine(line) {
     return /^ANSWER\s*:/i.test(line);
   }
@@ -143,29 +147,36 @@ function App() {
     const firstLine = block[0];
     const rest = block.slice(1).map(normalizeLine).filter(Boolean);
 
-    const labeledChoices = rest.filter(line => /^[A-Da-d][\.\)]\s*/.test(line));
+    const labeledChoices = rest.filter(line => isStrictChoiceLine(line));
 
-    if (labeledChoices.length >= 4) {
+    // If the block already has exactly four labeled choices, leave it alone.
+    if (labeledChoices.length === 4) {
       return [firstLine, ...rest];
     }
 
-    if (rest.length < 4) {
+    // If it has some labels but not all four, do not guess. Let validation catch it.
+    if (labeledChoices.length > 0) {
       return [firstLine, ...rest];
     }
 
-    const possibleChoices = rest.slice(-4);
-    const possiblePromptLines = rest.slice(0, -4);
-    const labels = ["A", "B", "C", "D"];
+    // Only auto-label when there are no labels and at least four trailing lines.
+    if (rest.length >= 4) {
+      const possibleChoices = rest.slice(-4);
+      const possiblePromptLines = rest.slice(0, -4);
+      const labels = ["A", "B", "C", "D"];
 
-    const normalizedChoices = possibleChoices.map((choice, index) => {
-      return `${labels[index]}. ${choice.replace(/^[A-Da-d][\.\)]\s*/, "")}`;
-    });
+      const normalizedChoices = possibleChoices.map((choice, index) => {
+        return `${labels[index]}. ${choice.replace(/^[A-Da-d][\.\)]\s*/, "")}`;
+      });
 
-    return [
-      firstLine,
-      ...possiblePromptLines,
-      ...normalizedChoices
-    ];
+      return [
+        firstLine,
+        ...possiblePromptLines,
+        ...normalizedChoices
+      ];
+    }
+
+    return [firstLine, ...rest];
   }
 
   function parseQuestionBlock(block, foundIssues) {
