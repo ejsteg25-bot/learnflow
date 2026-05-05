@@ -35,10 +35,7 @@ function App() {
 
     try {
       const arrayBuffer = await file.arrayBuffer();
-
-      const result = await mammoth.extractRawText({
-        arrayBuffer: arrayBuffer
-      });
+      const result = await mammoth.extractRawText({ arrayBuffer });
 
       if (!result.value || !result.value.trim()) {
         setText("");
@@ -118,6 +115,45 @@ function App() {
     return /^ANSWER\s*:/i.test(line);
   }
 
+  function splitInlineChoices(line) {
+    const normalized = normalizeLine(line);
+    const regex = /(?:^|\s)([A-Da-d])[\.\)]\s*/g;
+    const matches = [];
+    let match;
+
+    while ((match = regex.exec(normalized)) !== null) {
+      matches.push({
+        index: match.index + (match[0].startsWith(" ") ? 1 : 0),
+        label: match[1].toUpperCase()
+      });
+    }
+
+    if (matches.length <= 1) {
+      return [normalized];
+    }
+
+    const parts = [];
+
+    for (let i = 0; i < matches.length; i++) {
+      const start = matches[i].index;
+      const end = i + 1 < matches.length ? matches[i + 1].index : normalized.length;
+      parts.push(normalized.slice(start, end).trim());
+    }
+
+    return parts.filter(Boolean);
+  }
+
+  function expandInlineChoiceLines(lines) {
+    const expanded = [];
+
+    for (const line of lines) {
+      const parts = splitInlineChoices(line);
+      expanded.push(...parts);
+    }
+
+    return expanded;
+  }
+
   function normalizeChoiceLabel(line) {
     const match = line.match(/^\s*([A-Da-d])[\.\)]\s*(.*)$/);
 
@@ -145,21 +181,31 @@ function App() {
     if (!block || block.length === 0) return block;
 
     const firstLine = block[0];
-    const rest = block.slice(1).map(normalizeLine).filter(Boolean);
+    const rest = expandInlineChoiceLines(
+      block.slice(1).map(normalizeLine).filter(Boolean)
+    );
 
     const labeledChoices = rest.filter(line => isStrictChoiceLine(line));
 
-    // If the block already has exactly four labeled choices, leave it alone.
-    if (labeledChoices.length === 4) {
+    const normalizedLabels = labeledChoices.map(line =>
+      line.trim().charAt(0).toUpperCase()
+    );
+
+    if (
+      labeledChoices.length === 4 &&
+      normalizedLabels.join("") === "ABCD"
+    ) {
       return [firstLine, ...rest];
     }
 
-    // If it has some labels but not all four, do not guess. Let validation catch it.
+    if (labeledChoices.length >= 4) {
+      return [firstLine, ...rest];
+    }
+
     if (labeledChoices.length > 0) {
       return [firstLine, ...rest];
     }
 
-    // Only auto-label when there are no labels and at least four trailing lines.
     if (rest.length >= 4) {
       const possibleChoices = rest.slice(-4);
       const possiblePromptLines = rest.slice(0, -4);
@@ -201,7 +247,6 @@ function App() {
 
       if (isChoiceLine(line)) {
         readingChoices = true;
-
         const choice = normalizeChoiceLabel(line);
 
         if (!choice) {
@@ -211,6 +256,7 @@ function App() {
 
         if (choices[choice.label]) {
           foundIssues.push(`Question ${sourceNumber}: duplicate choice ${choice.label}.`);
+          continue;
         }
 
         choices[choice.label] = choice.text;
@@ -307,17 +353,6 @@ function App() {
       }
     }
 
-    const extraLabels = Object.keys(question.choices).filter(
-      label => !REQUIRED_LABELS.includes(label)
-    );
-
-    if (extraLabels.length > 0) {
-      foundIssues.push(
-        `Question ${question.sourceNumber}: unsupported extra choices detected: ${extraLabels.join(", ")}.`
-      );
-      valid = false;
-    }
-
     if (!question.answer) {
       foundIssues.push(`Question ${question.sourceNumber}: no correct answer detected.`);
       valid = false;
@@ -339,7 +374,7 @@ function App() {
   function validateAllQuestions(parsedQuestions, foundIssues) {
     const seenSourceNumbers = new Set();
 
-    const validated = parsedQuestions.map(question => {
+    return parsedQuestions.map(question => {
       const copy = { ...question };
 
       if (seenSourceNumbers.has(copy.sourceNumber)) {
@@ -353,8 +388,6 @@ function App() {
 
       return copy;
     });
-
-    return validated;
   }
 
   function safeDisplayQuestions(validQuestions) {
@@ -484,11 +517,7 @@ function App() {
     "div",
     { className: "p-6 max-w-4xl mx-auto font-sans" },
 
-    React.createElement(
-      "h1",
-      { className: "text-3xl font-bold mb-2" },
-      "LearnFlow"
-    ),
+    React.createElement("h1", { className: "text-3xl font-bold mb-2" }, "LearnFlow"),
 
     React.createElement(
       "p",
@@ -524,31 +553,19 @@ function App() {
     issues.length > 0 &&
       React.createElement(
         "div",
-        {
-          className:
-            "mt-4 border border-yellow-400 bg-yellow-50 p-3 rounded"
-        },
-        React.createElement(
-          "h2",
-          { className: "font-bold mb-2" },
-          "Formatting / Validation Report"
-        ),
+        { className: "mt-4 border border-yellow-400 bg-yellow-50 p-3 rounded" },
+        React.createElement("h2", { className: "font-bold mb-2" }, "Formatting / Validation Report"),
         React.createElement(
           "ul",
           { className: "list-disc ml-6" },
-          issues.map((issue, i) =>
-            React.createElement("li", { key: i }, issue)
-          )
+          issues.map((issue, i) => React.createElement("li", { key: i }, issue))
         )
       ),
 
     blocked &&
       React.createElement(
         "div",
-        {
-          className:
-            "mt-4 border border-red-400 bg-red-50 p-3 rounded text-red-800"
-        },
+        { className: "mt-4 border border-red-400 bg-red-50 p-3 rounded text-red-800" },
         "Some items were blocked to protect LearnFlow rules. Fix the listed formatting issues before using this with students."
       ),
 
@@ -598,8 +615,7 @@ function App() {
           React.createElement(
             "button",
             {
-              className:
-                "bg-gray-600 text-white px-4 py-2 rounded disabled:opacity-50",
+              className: "bg-gray-600 text-white px-4 py-2 rounded disabled:opacity-50",
               onClick: previousQuestion,
               disabled: index === 0
             },
@@ -609,8 +625,7 @@ function App() {
           React.createElement(
             "button",
             {
-              className:
-                "bg-green-600 text-white px-4 py-2 rounded disabled:opacity-50",
+              className: "bg-green-600 text-white px-4 py-2 rounded disabled:opacity-50",
               onClick: nextQuestion,
               disabled: index === questions.length - 1
             },
