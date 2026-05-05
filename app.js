@@ -7,17 +7,17 @@ function App() {
   const [issues, setIssues] = useState([]);
   const [blocked, setBlocked] = useState(false);
   const [selectedAnswers, setSelectedAnswers] = useState({});
+  const [mode, setMode] = useState(null);
+  const [reteachInput, setReteachInput] = useState("");
+  const [reteachMessage, setReteachMessage] = useState("");
 
   const REQUIRED_LABELS = ["A", "B", "C", "D"];
 
   async function handleFileUpload(event) {
     const file = event.target.files[0];
-
     if (!file) return;
 
-    setQuestions([]);
-    setSelectedAnswers({});
-    setIndex(0);
+    resetSession();
 
     if (!file.name.toLowerCase().endsWith(".docx")) {
       setIssues(["Only .docx files are supported right now. PDF support should come later."]);
@@ -50,21 +50,26 @@ function App() {
       ]);
       setBlocked(false);
     } catch (error) {
-      setIssues([
-        "The DOCX file could not be read. Try saving it again as a clean .docx file."
-      ]);
+      setIssues(["The DOCX file could not be read. Try saving it again as a clean .docx file."]);
       setBlocked(true);
     }
   }
 
+  function resetSession() {
+    setQuestions([]);
+    setSelectedAnswers({});
+    setIndex(0);
+    setMode(null);
+    setReteachInput("");
+    setReteachMessage("");
+  }
+
   function shuffleArray(array) {
     const copy = [...array];
-
     for (let i = copy.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [copy[i], copy[j]] = [copy[j], copy[i]];
     }
-
     return copy;
   }
 
@@ -85,7 +90,6 @@ function App() {
 
   function isNoiseLine(line) {
     const cleaned = line.toLowerCase();
-
     return (
       cleaned.includes("do not write on this test") ||
       cleaned.includes("class set") ||
@@ -100,7 +104,7 @@ function App() {
   }
 
   function isQuestionStart(line) {
-  return /^\s*\d+\.\s*[A-Za-z]/.test(line);
+    return /^\s*\d+\.\s*[A-Za-z]/.test(line);
   }
 
   function isChoiceLine(line) {
@@ -113,7 +117,6 @@ function App() {
 
   function normalizeChoiceLabel(line) {
     const match = line.match(/^\s*([A-Da-d])[\.\)]\s*(.*)$/);
-
     if (!match) return null;
 
     const label = match[1].toUpperCase();
@@ -122,11 +125,7 @@ function App() {
     const isCorrect = /\*{2,3}/.test(choiceText);
     choiceText = choiceText.replace(/\*{2,3}/g, "").trim();
 
-    return {
-      label,
-      text: choiceText,
-      isCorrect
-    };
+    return { label, text: choiceText, isCorrect };
   }
 
   function extractAnswerFromLine(line) {
@@ -191,7 +190,7 @@ function App() {
 
   function parseQuestionBlock(block, foundIssues) {
     const firstLine = block[0];
-    const qMatch = firstLine.match(/^\s*(\d+)\.\s+(.*)$/);
+    const qMatch = firstLine.match(/^\s*(\d+)\.\s*(.*)$/);
 
     if (!qMatch) {
       foundIssues.push("A question block was found but did not start correctly.");
@@ -206,12 +205,10 @@ function App() {
 
     for (let i = 1; i < block.length; i++) {
       const line = normalizeLine(block[i]);
-
       if (!line || isNoiseLine(line)) continue;
 
       if (isChoiceLine(line)) {
         readingChoices = true;
-
         const choice = normalizeChoiceLabel(line);
 
         if (!choice) {
@@ -230,7 +227,6 @@ function App() {
           if (answer && answer !== choice.label) {
             foundIssues.push(`Question ${sourceNumber}: multiple correct answers detected.`);
           }
-
           answer = choice.label;
         }
 
@@ -241,16 +237,11 @@ function App() {
         const extracted = extractAnswerFromLine(line);
 
         if (!extracted) {
-          foundIssues.push(
-            `Question ${sourceNumber}: ANSWER line exists but no valid A-D answer found.`
-          );
+          foundIssues.push(`Question ${sourceNumber}: ANSWER line exists but no valid A-D answer found.`);
         } else {
           if (answer && answer !== extracted) {
-            foundIssues.push(
-              `Question ${sourceNumber}: answer marker conflicts with ANSWER line.`
-            );
+            foundIssues.push(`Question ${sourceNumber}: answer marker conflicts with ANSWER line.`);
           }
-
           answer = extracted;
         }
 
@@ -259,37 +250,12 @@ function App() {
 
       if (!readingChoices) {
         promptLines.push(line);
-      } else {
-        const labels = Object.keys(choices);
-        const lastLabel = labels[labels.length - 1];
-
-        if (!lastLabel) {
-          foundIssues.push(
-            `Question ${sourceNumber}: extra text found after choices but no choice to attach it to.`
-          );
-          continue;
-        }
-
-        const isCorrect = /\*{2,3}/.test(line);
-        const cleanedContinuation = line.replace(/\*{2,3}/g, "").trim();
-
-        choices[lastLabel] = `${choices[lastLabel]} ${cleanedContinuation}`.trim();
-
-        if (isCorrect) {
-          if (answer && answer !== lastLabel) {
-            foundIssues.push(`Question ${sourceNumber}: multiple correct answers detected.`);
-          }
-
-          answer = lastLabel;
-        }
       }
     }
 
-    const prompt = promptLines.join(" ").trim();
-
     return {
       sourceNumber,
-      prompt,
+      prompt: promptLines.join(" ").trim(),
       choices,
       answer,
       valid: false
@@ -301,15 +267,8 @@ function App() {
 
     let valid = true;
 
-    if (!question.sourceNumber) {
-      foundIssues.push("A question is missing its source number.");
-      valid = false;
-    }
-
-    if (!question.prompt || question.prompt.length < 3) {
-      foundIssues.push(`Question ${question.sourceNumber}: missing or too-short prompt.`);
-      valid = false;
-    }
+    if (!question.sourceNumber) valid = false;
+    if (!question.prompt || question.prompt.length < 3) valid = false;
 
     for (const label of REQUIRED_LABELS) {
       if (!question.choices[label] || question.choices[label].trim().length === 0) {
@@ -325,11 +284,6 @@ function App() {
 
     if (question.answer && !REQUIRED_LABELS.includes(question.answer)) {
       foundIssues.push(`Question ${question.sourceNumber}: answer must be A, B, C, or D.`);
-      valid = false;
-    }
-
-    if (question.answer && !question.choices[question.answer]) {
-      foundIssues.push(`Question ${question.sourceNumber}: answer points to a missing choice.`);
       valid = false;
     }
 
@@ -373,9 +327,13 @@ function App() {
     const foundIssues = [];
     const cleaned = cleanText(text);
 
+    setMode(null);
+    setSelectedAnswers({});
+    setReteachInput("");
+    setReteachMessage("");
+
     if (!cleaned) {
       setQuestions([]);
-      setSelectedAnswers({});
       setIssues(["No text was provided. Paste text or upload a DOCX file first."]);
       setBlocked(true);
       setIndex(0);
@@ -393,10 +351,7 @@ function App() {
 
     for (const line of lines) {
       if (isQuestionStart(line)) {
-        if (currentBlock.length > 0) {
-          blocks.push(currentBlock);
-        }
-
+        if (currentBlock.length > 0) blocks.push(currentBlock);
         currentBlock = [line];
       } else if (currentBlock.length > 0) {
         currentBlock.push(line);
@@ -405,16 +360,11 @@ function App() {
       }
     }
 
-    if (currentBlock.length > 0) {
-      blocks.push(currentBlock);
-    }
+    if (currentBlock.length > 0) blocks.push(currentBlock);
 
     if (blocks.length === 0) {
       setQuestions([]);
-      setSelectedAnswers({});
-      setIssues([
-        "No valid numbered questions were found. Questions must begin like: 1. Question text"
-      ]);
+      setIssues(["No valid numbered questions were found. Questions must begin like: 1. Question text"]);
       setBlocked(true);
       setIndex(0);
       return;
@@ -430,7 +380,6 @@ function App() {
 
     if (validQuestions.length === 0) {
       setQuestions([]);
-      setSelectedAnswers({});
       setIssues([
         ...foundIssues,
         "No questions were allowed into Quiz/Tutor because none passed validation."
@@ -443,23 +392,44 @@ function App() {
     const invalidCount = validated.length - validQuestions.length;
 
     if (invalidCount > 0) {
-      foundIssues.push(
-        `${invalidCount} question(s) were blocked because they did not meet LearnFlow formatting rules.`
-      );
+      foundIssues.push(`${invalidCount} question(s) were skipped because they did not meet LearnFlow formatting rules.`);
     }
 
-    const randomized = shuffleArray(safeDisplayQuestions(validQuestions));
-
-    setQuestions(randomized);
-    setSelectedAnswers({});
+    setQuestions(shuffleArray(safeDisplayQuestions(validQuestions)));
     setIssues(foundIssues);
     setBlocked(invalidCount > 0);
     setIndex(0);
   }
 
+  function startMode(selectedMode) {
+    setMode(selectedMode);
+    setIndex(0);
+    setSelectedAnswers({});
+    setReteachInput("");
+    setReteachMessage("");
+  }
+
+  function startReteach() {
+    const requested = reteachInput.trim();
+
+    if (!requested) {
+      setReteachMessage("Enter a source question number first.");
+      return;
+    }
+
+    const foundIndex = questions.findIndex(q => q.sourceNumber === requested);
+
+    if (foundIndex === -1) {
+      setReteachMessage(`Question ${requested} was not found or was skipped during validation.`);
+      return;
+    }
+
+    setIndex(foundIndex);
+    setReteachMessage("");
+  }
+
   function selectAnswer(label) {
     const currentQuestion = questions[index];
-
     if (!currentQuestion) return;
 
     setSelectedAnswers(prev => ({
@@ -474,6 +444,14 @@ function App() {
 
   function previousQuestion() {
     setIndex(i => Math.max(i - 1, 0));
+  }
+
+  function backToModes() {
+    setMode(null);
+    setSelectedAnswers({});
+    setReteachInput("");
+    setReteachMessage("");
+    setIndex(0);
   }
 
   const currentQuestion = questions[index];
@@ -502,8 +480,7 @@ function App() {
       rows: 12,
       value: text,
       onChange: e => setText(e.target.value),
-      placeholder:
-        "1. Question text\nA. choice\nB. choice\nC. choice\nD. correct choice**"
+      placeholder: "1. Question text\nA. choice\nB. choice\nC. choice\nD. correct choice**"
     }),
 
     React.createElement(
@@ -531,10 +508,92 @@ function App() {
       React.createElement(
         "div",
         { className: "mt-4 border border-red-400 bg-red-50 p-3 rounded text-red-800" },
-        "Some items were blocked to protect LearnFlow rules. Fix the listed formatting issues before using this with students."
+        "Some items were skipped or blocked to protect LearnFlow rules."
       ),
 
     questions.length > 0 &&
+      !mode &&
+      React.createElement(
+        "div",
+        { className: "mt-6 border rounded p-5 bg-white shadow" },
+
+        React.createElement("h2", { className: "text-xl font-bold mb-2" }, "Choose a Mode"),
+
+        React.createElement(
+          "p",
+          { className: "text-gray-600 mb-4" },
+          `${questions.length} valid question(s) are ready.`
+        ),
+
+        React.createElement(
+          "div",
+          { className: "grid md:grid-cols-3 gap-3" },
+
+          React.createElement(
+            "button",
+            {
+              className: "border rounded p-4 text-left hover:bg-blue-50",
+              onClick: () => startMode("Quiz")
+            },
+            React.createElement("div", { className: "font-bold text-blue-700" }, "Quiz Mode"),
+            React.createElement("div", { className: "text-sm text-gray-600" }, "Independent practice.")
+          ),
+
+          React.createElement(
+            "button",
+            {
+              className: "border rounded p-4 text-left hover:bg-green-50",
+              onClick: () => startMode("Tutor")
+            },
+            React.createElement("div", { className: "font-bold text-green-700" }, "Tutor Mode"),
+            React.createElement("div", { className: "text-sm text-gray-600" }, "Guided support mode.")
+          ),
+
+          React.createElement(
+            "button",
+            {
+              className: "border rounded p-4 text-left hover:bg-purple-50",
+              onClick: () => startMode("Reteach")
+            },
+            React.createElement("div", { className: "font-bold text-purple-700" }, "Reteach Mode"),
+            React.createElement("div", { className: "text-sm text-gray-600" }, "Load exact source question.")
+          )
+        )
+      ),
+
+    questions.length > 0 &&
+      mode === "Reteach" &&
+      React.createElement(
+        "div",
+        { className: "mt-6 border rounded p-4 bg-purple-50" },
+
+        React.createElement("h2", { className: "font-bold mb-2" }, "Reteach Lookup"),
+
+        React.createElement(
+          "div",
+          { className: "flex gap-2 mb-2" },
+          React.createElement("input", {
+            className: "border rounded p-2 flex-1",
+            value: reteachInput,
+            onChange: e => setReteachInput(e.target.value),
+            placeholder: "Enter source question number, example: 14"
+          }),
+          React.createElement(
+            "button",
+            {
+              className: "bg-purple-600 text-white px-4 py-2 rounded",
+              onClick: startReteach
+            },
+            "Load"
+          )
+        ),
+
+        reteachMessage &&
+          React.createElement("p", { className: "text-sm text-red-700" }, reteachMessage)
+      ),
+
+    questions.length > 0 &&
+      mode &&
       currentQuestion &&
       React.createElement(
         "div",
@@ -542,8 +601,22 @@ function App() {
 
         React.createElement(
           "div",
-          { className: "mb-3 text-sm text-gray-600" },
-          `Question ${index + 1} of ${questions.length}`
+          { className: "mb-3 flex justify-between items-center text-sm text-gray-600" },
+          React.createElement(
+            "span",
+            null,
+            mode === "Reteach"
+              ? `Reteach: Source Question ${currentQuestion.sourceNumber}`
+              : `${mode} Mode — Question ${index + 1} of ${questions.length}`
+          ),
+          React.createElement(
+            "button",
+            {
+              className: "text-blue-600 underline",
+              onClick: backToModes
+            },
+            "Change Mode"
+          )
         ),
 
         React.createElement(
@@ -573,30 +646,31 @@ function App() {
           })
         ),
 
-        React.createElement(
-          "div",
-          { className: "mt-4 flex gap-2" },
-
+        mode !== "Reteach" &&
           React.createElement(
-            "button",
-            {
-              className: "bg-gray-600 text-white px-4 py-2 rounded disabled:opacity-50",
-              onClick: previousQuestion,
-              disabled: index === 0
-            },
-            "Previous"
-          ),
+            "div",
+            { className: "mt-4 flex gap-2" },
 
-          React.createElement(
-            "button",
-            {
-              className: "bg-green-600 text-white px-4 py-2 rounded disabled:opacity-50",
-              onClick: nextQuestion,
-              disabled: index === questions.length - 1
-            },
-            "Next"
+            React.createElement(
+              "button",
+              {
+                className: "bg-gray-600 text-white px-4 py-2 rounded disabled:opacity-50",
+                onClick: previousQuestion,
+                disabled: index === 0
+              },
+              "Previous"
+            ),
+
+            React.createElement(
+              "button",
+              {
+                className: "bg-green-600 text-white px-4 py-2 rounded disabled:opacity-50",
+                onClick: nextQuestion,
+                disabled: index === questions.length - 1
+              },
+              "Next"
+            )
           )
-        )
       )
   );
 }
