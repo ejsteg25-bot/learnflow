@@ -100,7 +100,7 @@ function App() {
   }
 
   function isQuestionStart(line) {
-    return /^\s*\d+\.\s+/.test(line);
+  return /^\s*\d+\.\s*/.test(line);
   }
 
   function isChoiceLine(line) {
