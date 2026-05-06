@@ -371,6 +371,10 @@ function App() {
     if (!question.sourceNumber) valid = false;
     if (!question.prompt || question.prompt.length < 3) valid = false;
 
+    if (Object.keys(question.choices).length === 0) {
+    return false;
+    }
+    
     for (const label of REQUIRED_LABELS) {
       if (!question.choices[label] || question.choices[label].trim().length === 0) {
         foundIssues.push(`Question ${question.sourceNumber}: missing choice ${label}.`);
