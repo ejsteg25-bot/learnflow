@@ -331,9 +331,11 @@ function App() {
     }
 
     if (!question.answer) {
-      foundIssues.push(`Question ${question.sourceNumber}: no correct answer detected.`);
-      valid = false;
-    }
+  foundIssues.push(`Question ${question.sourceNumber}: no correct answer detected (allowed in Quiz mode).`);
+  
+  // Allow question to pass, just mark it
+  question.answer = null;
+}
 
     if (question.answer && !REQUIRED_LABELS.includes(question.answer)) {
       foundIssues.push(`Question ${question.sourceNumber}: answer must be A, B, C, or D.`);
