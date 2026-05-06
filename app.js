@@ -269,18 +269,22 @@ function App() {
     }
 
     if (labelsFound.length === 0 && rest.length >= 4) {
-      const possibleChoices = rest.slice(-4);
-      const possiblePromptLines = rest.slice(0, -4);
+  const lastFour = rest.slice(-4);
+  const likelyChoices = lastFour.filter(line => line.length < 60);
 
-      return [
-        firstLine,
-        ...possiblePromptLines,
-        `A. ${possibleChoices[0]}`,
-        `B. ${possibleChoices[1]}`,
-        `C. ${possibleChoices[2]}`,
-        `D. ${possibleChoices[3]}`
-      ];
-    }
+  if (likelyChoices.length === 4) {
+    const possiblePromptLines = rest.slice(0, -4);
+
+    return [
+      firstLine,
+      ...possiblePromptLines,
+      `A. ${likelyChoices[0]}`,
+      `B. ${likelyChoices[1]}`,
+      `C. ${likelyChoices[2]}`,
+      `D. ${likelyChoices[3]}`
+    ];
+  }
+}
 
     return [firstLine, ...rest];
   }
