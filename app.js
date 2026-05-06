@@ -267,7 +267,7 @@ function App() {
     ];
   }
 
-  if (labelsFound.length === 0 && rest.length >= 4) {
+  if (labelsFound.length < 4 && rest.length >= 4) {
     const lastFour = rest.slice(-4);
     const likelyChoices = lastFour.filter(line => line.length < 60);
 
