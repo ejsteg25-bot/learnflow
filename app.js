@@ -20,15 +20,13 @@ function App() {
     resetSession();
 
     if (!file.name.toLowerCase().endsWith(".docx")) {
-      setIssues(["Only .docx files are supported right now. PDF support should come later."]);
+      setIssues(["Only .docx files are supported right now."]);
       setBlocked(true);
       return;
     }
 
     if (typeof mammoth === "undefined") {
-      setIssues([
-        "DOCX reader is not loaded. Make sure mammoth.browser.min.js is included in index.html before app.js."
-      ]);
+      setIssues(["DOCX reader is not loaded. Make sure mammoth is included in index.html before app.js."]);
       setBlocked(true);
       return;
     }
@@ -45,9 +43,7 @@ function App() {
       }
 
       setText(result.value);
-      setIssues([
-        "DOCX uploaded successfully. Review the extracted text before clicking Analyze Material."
-      ]);
+      setIssues(["DOCX uploaded successfully. Review the extracted text before clicking Analyze Material."]);
       setBlocked(false);
     } catch (error) {
       setIssues(["The DOCX file could not be read. Try saving it again as a clean .docx file."]);
@@ -66,10 +62,12 @@ function App() {
 
   function shuffleArray(array) {
     const copy = [...array];
+
     for (let i = copy.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [copy[i], copy[j]] = [copy[j], copy[i]];
     }
+
     return copy;
   }
 
@@ -88,23 +86,49 @@ function App() {
     return line.replace(/\s+/g, " ").trim();
   }
 
+  function splitInlineChoices(line) {
+    const clean = normalizeLine(line);
+
+    const pattern = /([A-Da-d])[\.\)]\s*/g;
+    const matches = [...clean.matchAll(pattern)];
+
+    if (matches.length <= 1) {
+      return [line];
+    }
+
+    const parts = [];
+
+    for (let i = 0; i < matches.length; i++) {
+      const start = matches[i].index;
+      const end = i + 1 < matches.length ? matches[i + 1].index : clean.length;
+      const piece = clean.slice(start, end).trim();
+
+      if (piece) parts.push(piece);
+    }
+
+    return parts.length > 0 ? parts : [line];
+  }
+
   function isNoiseLine(line) {
     const cleaned = line.toLowerCase();
+
     return (
       cleaned.includes("do not write on this test") ||
       cleaned.includes("class set") ||
+      cleaned.includes("nomenclature test") ||
       cleaned.includes("chemical reactions test") ||
       cleaned.includes("aca chemistry") ||
       cleaned.includes("directions:") ||
+      cleaned.includes("multiple choice:") ||
       cleaned.includes("answer the following questions") ||
       cleaned.includes("scantron") ||
-      cleaned.includes("free response question") ||
+      cleaned.includes("free response") ||
       cleaned.includes("more on back")
     );
   }
 
   function isQuestionStart(line) {
-    return /^\s*\d+\.\s*[A-Za-z]/.test(line);
+    return /^\s*\d+\.\s*[A-Za-z0-9]/.test(line);
   }
 
   function isChoiceLine(line) {
@@ -125,12 +149,37 @@ function App() {
     const isCorrect = /\*{2,3}/.test(choiceText);
     choiceText = choiceText.replace(/\*{2,3}/g, "").trim();
 
-    return { label, text: choiceText, isCorrect };
+    return {
+      label,
+      text: choiceText,
+      isCorrect
+    };
   }
 
   function extractAnswerFromLine(line) {
     const match = line.match(/^ANSWER\s*:\s*([A-Da-d])/i);
     return match ? match[1].toUpperCase() : null;
+  }
+
+  function looksLikeUnnumberedQuestion(line) {
+    if (!line || line.length < 10) return false;
+    if (isChoiceLine(line)) return false;
+    if (isNoiseLine(line)) return false;
+
+    return (
+      /\?$/.test(line) ||
+      /\bis\b/i.test(line) ||
+      /\bare\b/i.test(line) ||
+      /\bwhich\b/i.test(line) ||
+      /\bwhat\b/i.test(line) ||
+      /\bwhen\b/i.test(line) ||
+      /\bhow\b/i.test(line) ||
+      /\bselect\b/i.test(line) ||
+      /\bcorrect\b/i.test(line) ||
+      /\brepresents?\b/i.test(line) ||
+      /\bcalled\b/i.test(line) ||
+      /\bformula\b/i.test(line)
+    );
   }
 
   function normalizeQuestionBlock(block) {
@@ -205,10 +254,12 @@ function App() {
 
     for (let i = 1; i < block.length; i++) {
       const line = normalizeLine(block[i]);
+
       if (!line || isNoiseLine(line)) continue;
 
       if (isChoiceLine(line)) {
         readingChoices = true;
+
         const choice = normalizeChoiceLabel(line);
 
         if (!choice) {
@@ -227,6 +278,7 @@ function App() {
           if (answer && answer !== choice.label) {
             foundIssues.push(`Question ${sourceNumber}: multiple correct answers detected.`);
           }
+
           answer = choice.label;
         }
 
@@ -242,6 +294,7 @@ function App() {
           if (answer && answer !== extracted) {
             foundIssues.push(`Question ${sourceNumber}: answer marker conflicts with ANSWER line.`);
           }
+
           answer = extracted;
         }
 
@@ -340,23 +393,37 @@ function App() {
       return;
     }
 
-    const lines = cleaned
-      .split("\n")
+    const rawLines = cleaned.split("\n");
+
+    const lines = rawLines
+      .flatMap(line => splitInlineChoices(line))
       .map(normalizeLine)
       .filter(line => line.length > 0)
       .filter(line => !isNoiseLine(line));
 
     const blocks = [];
     let currentBlock = [];
+    let autoNumber = 1;
 
     for (const line of lines) {
       if (isQuestionStart(line)) {
         if (currentBlock.length > 0) blocks.push(currentBlock);
+
         currentBlock = [line];
+
+        const numberMatch = line.match(/^\s*(\d+)\./);
+        if (numberMatch) {
+          autoNumber = Math.max(autoNumber, Number(numberMatch[1]) + 1);
+        }
+      } else if (looksLikeUnnumberedQuestion(line)) {
+        if (currentBlock.length > 0) blocks.push(currentBlock);
+        currentBlock = [`${autoNumber}. ${line}`];
+        autoNumber++;
       } else if (currentBlock.length > 0) {
         currentBlock.push(line);
       } else if (blocks.length === 0 && line.length > 10) {
-        currentBlock = [`1. ${line}`];
+        currentBlock = [`${autoNumber}. ${line}`];
+        autoNumber++;
       }
     }
 
