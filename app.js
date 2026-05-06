@@ -209,105 +209,84 @@ function App() {
   }
 
   function normalizeQuestionBlock(block) {
-    if (!block || block.length === 0) return block;
+  if (!block || block.length === 0) return block;
 
-    const firstLine = block[0];
-    const rest = block
-      .slice(1)
-      .flatMap(line => splitMixedChoiceLine(line))
-      .map(normalizeLine)
-      .filter(Boolean);
+  const firstLine = block[0];
+  const rest = block
+    .slice(1)
+    .flatMap(line => splitMixedChoiceLine(line))
+    .map(normalizeLine)
+    .filter(Boolean);
 
-    const choiceMap = {};
-    const unlabeledLines = [];
-    const promptLines = [];
+  const choiceMap = {};
+  const unlabeledLines = [];
 
-    for (const line of rest) {
-      const choice = normalizeChoiceLabel(line);
+  for (const line of rest) {
+    const choice = normalizeChoiceLabel(line);
 
-      if (choice) {
-        const cleanedChoiceLine = `${choice.label}. ${choice.text}${choice.isCorrect ? " ***" : ""}`;
+    if (choice) {
+      const cleanedChoiceLine = `${choice.label}. ${choice.text}${choice.isCorrect ? " ***" : ""}`;
 
-        if (!choiceMap[choice.label]) {
-          choiceMap[choice.label] = cleanedChoiceLine;
-        }
-
-        continue;
+      if (!choiceMap[choice.label]) {
+        choiceMap[choice.label] = cleanedChoiceLine;
       }
 
-      unlabeledLines.push(line);
+      continue;
     }
 
-    const labelsFound = Object.keys(choiceMap);
+    unlabeledLines.push(line);
+  }
 
-    if (labelsFound.length > 0 && labelsFound.length < 4) {
-      const missingLabels = REQUIRED_LABELS.filter(label => !choiceMap[label]);
-      const fallbackChoices = unlabeledLines.slice(-missingLabels.length);
-      const possiblePromptLines = unlabeledLines.slice(0, unlabeledLines.length - fallbackChoices.length);
+  const labelsFound = Object.keys(choiceMap);
 
-      missingLabels.forEach((label, i) => {
-        if (fallbackChoices[i]) {
-          choiceMap[label] = `${label}. ${fallbackChoices[i]}`;
-        }
-      });
+  if (labelsFound.length === 4) {
+    return [
+      firstLine,
+      ...unlabeledLines,
+      ...REQUIRED_LABELS.map(label => choiceMap[label])
+    ];
+  }
 
-      return [
-        firstLine,
-        ...possiblePromptLines,
-        ...REQUIRED_LABELS
-          .filter(label => choiceMap[label])
-          .map(label => choiceMap[label])
-      ];
-    }
+  if (labelsFound.length > 0 && labelsFound.length < 4) {
+    const missingLabels = REQUIRED_LABELS.filter(label => !choiceMap[label]);
+    const fallbackChoices = unlabeledLines.slice(-missingLabels.length);
+    const possiblePromptLines = unlabeledLines.slice(0, unlabeledLines.length - fallbackChoices.length);
 
-   // Handle fully labeled A-D
-if (labelsFound.length === 4) {
-  return [
-    firstLine,
-    ...promptLines,
-    ...REQUIRED_LABELS.map(label => choiceMap[label])
-  ];
-}
-
-// Handle partially labeled (mixed format)
-if (labelsFound.length > 0 && labelsFound.length < 4) {
-  const missingLabels = REQUIRED_LABELS.filter(label => !choiceMap[label]);
-  const fallbackChoices = promptLines.slice(-missingLabels.length);
-
-  missingLabels.forEach((label, i) => {
-    if (fallbackChoices[i]) {
-      choiceMap[label] = `${label}. ${fallbackChoices[i]}`;
-    }
-  });
-
-  return [
-    firstLine,
-    ...promptLines.slice(0, -missingLabels.length),
-    ...REQUIRED_LABELS.map(label => choiceMap[label]).filter(Boolean)
-  ];
-}
-
-// 🔥 NEW: Handle unlabeled multiple choice
-if (labelsFound.length === 0 && rest.length >= 4) {
-  const lastFour = rest.slice(-4);
-  const likelyChoices = lastFour.filter(line => line.length < 60);
-
-  if (likelyChoices.length === 4) {
-    const possiblePromptLines = rest.slice(0, -4);
+    missingLabels.forEach((label, i) => {
+      if (fallbackChoices[i]) {
+        choiceMap[label] = `${label}. ${fallbackChoices[i]}`;
+      }
+    });
 
     return [
       firstLine,
       ...possiblePromptLines,
-      `A. ${likelyChoices[0]}`,
-      `B. ${likelyChoices[1]}`,
-      `C. ${likelyChoices[2]}`,
-      `D. ${likelyChoices[3]}`
+      ...REQUIRED_LABELS
+        .filter(label => choiceMap[label])
+        .map(label => choiceMap[label])
     ];
   }
-}
 
-// fallback
-return [firstLine, ...rest];
+  if (labelsFound.length === 0 && rest.length >= 4) {
+    const lastFour = rest.slice(-4);
+    const likelyChoices = lastFour.filter(line => line.length < 60);
+
+    if (likelyChoices.length === 4) {
+      const possiblePromptLines = rest.slice(0, -4);
+
+      return [
+        firstLine,
+        ...possiblePromptLines,
+        `A. ${likelyChoices[0]}`,
+        `B. ${likelyChoices[1]}`,
+        `C. ${likelyChoices[2]}`,
+        `D. ${likelyChoices[3]}`
+      ];
+    }
+  }
+
+  return [firstLine, ...rest];
+}
 
   function parseQuestionBlock(block, foundIssues) {
     const firstLine = block[0];
