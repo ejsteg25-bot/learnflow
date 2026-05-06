@@ -210,15 +210,39 @@ function App() {
 
     const labelsFound = Object.keys(choiceMap);
 
-    if (labelsFound.length > 0) {
-      return [
-        firstLine,
-        ...promptLines,
-        ...REQUIRED_LABELS
-          .filter(label => choiceMap[label])
-          .map(label => choiceMap[label])
-      ];
+    const labelsFound = Object.keys(choiceMap);
+
+// If we have some labeled choices but not all A-D, try to fix
+if (labelsFound.length > 0 && labelsFound.length < 4) {
+
+  // collect unlabeled lines as fallback choices
+  const extraChoices = promptLines.slice(-4);
+
+  const combined = [];
+
+  REQUIRED_LABELS.forEach((label, i) => {
+    if (choiceMap[label]) {
+      combined.push(choiceMap[label]);
+    } else if (extraChoices[i]) {
+      combined.push(`${label}. ${extraChoices[i]}`);
     }
+  });
+
+  return [
+    firstLine,
+    ...promptLines.slice(0, -4),
+    ...combined
+  ];
+}
+
+// normal labeled case
+if (labelsFound.length === 4) {
+  return [
+    firstLine,
+    ...promptLines,
+    ...REQUIRED_LABELS.map(label => choiceMap[label])
+  ];
+}
 
     if (rest.length >= 4) {
       const possibleChoices = rest.slice(-4);
