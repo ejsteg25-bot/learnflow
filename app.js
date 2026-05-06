@@ -26,7 +26,9 @@ function App() {
     }
 
     if (typeof mammoth === "undefined") {
-      setIssues(["DOCX reader is not loaded. Make sure mammoth is included in index.html before app.js."]);
+      setIssues([
+        "DOCX reader is not loaded. Make sure mammoth.browser.min.js is included in index.html before app.js."
+      ]);
       setBlocked(true);
       return;
     }
@@ -43,10 +45,14 @@ function App() {
       }
 
       setText(result.value);
-      setIssues(["DOCX uploaded successfully. Review the extracted text before clicking Analyze Material."]);
+      setIssues([
+        "DOCX uploaded successfully. Review the extracted text before clicking Analyze Material."
+      ]);
       setBlocked(false);
     } catch (error) {
-      setIssues(["The DOCX file could not be read. Try saving it again as a clean .docx file."]);
+      setIssues([
+        "The DOCX file could not be read. Try saving it again as a clean .docx file."
+      ]);
       setBlocked(true);
     }
   }
@@ -86,29 +92,6 @@ function App() {
     return line.replace(/\s+/g, " ").trim();
   }
 
-  function splitInlineChoices(line) {
-    const clean = normalizeLine(line);
-
-    const pattern = /([A-Da-d])[\.\)]\s*/g;
-    const matches = [...clean.matchAll(pattern)];
-
-    if (matches.length <= 1) {
-      return [line];
-    }
-
-    const parts = [];
-
-    for (let i = 0; i < matches.length; i++) {
-      const start = matches[i].index;
-      const end = i + 1 < matches.length ? matches[i + 1].index : clean.length;
-      const piece = clean.slice(start, end).trim();
-
-      if (piece) parts.push(piece);
-    }
-
-    return parts.length > 0 ? parts : [line];
-  }
-
   function isNoiseLine(line) {
     const cleaned = line.toLowerCase();
 
@@ -127,12 +110,54 @@ function App() {
     );
   }
 
+  function splitMixedChoiceLine(line) {
+    const clean = normalizeLine(line);
+    const pattern = /(^|\s)([A-Da-d])[\.\)]{1,2}\s*/g;
+    const matches = [];
+    let match;
+
+    while ((match = pattern.exec(clean)) !== null) {
+      matches.push({
+        start: match.index + match[1].length,
+        label: match[2].toUpperCase()
+      });
+    }
+
+    if (matches.length === 0) {
+      return [clean];
+    }
+
+    const parts = [];
+    const firstStart = matches[0].start;
+
+    if (firstStart > 0) {
+      const prefix = clean.slice(0, firstStart).trim();
+      if (prefix) parts.push(prefix);
+    }
+
+    for (let i = 0; i < matches.length; i++) {
+      const start = matches[i].start;
+      const end = i + 1 < matches.length ? matches[i + 1].start : clean.length;
+      const piece = clean.slice(start, end).trim();
+
+      if (piece) {
+        const fixedPiece = piece.replace(/^([A-Da-d])[\.\)]{1,2}\s*/, (m, label) => {
+          return label.toUpperCase() + ". ";
+        });
+
+        parts.push(fixedPiece);
+      }
+    }
+
+    return parts.length > 0 ? parts : [clean];
+  }
+
   function isQuestionStart(line) {
     return /^\s*\d+\.\s*[A-Za-z0-9]/.test(line);
   }
 
   function isChoiceLine(line) {
-    return /^\s*[A-Da-d][\.\)]\s*/.test(line);
+    return /^\s*[A-Da-d][\.\)]{1,2}\s*/.test(line);
   }
 
   function isAnswerLine(line) {
@@ -140,7 +165,7 @@ function App() {
   }
 
   function normalizeChoiceLabel(line) {
-    const match = line.match(/^\s*([A-Da-d])[\.\)]\s*(.*)$/);
+    const match = line.match(/^\s*([A-Da-d])[\.\)]{1,2}\s*(.*)$/);
     if (!match) return null;
 
     const label = match[1].toUpperCase();
@@ -168,8 +193,6 @@ function App() {
 
     return (
       /\?$/.test(line) ||
-      /\bis\b/i.test(line) ||
-      /\bare\b/i.test(line) ||
       /\bwhich\b/i.test(line) ||
       /\bwhat\b/i.test(line) ||
       /\bwhen\b/i.test(line) ||
@@ -178,7 +201,10 @@ function App() {
       /\bcorrect\b/i.test(line) ||
       /\brepresents?\b/i.test(line) ||
       /\bcalled\b/i.test(line) ||
-      /\bformula\b/i.test(line)
+      /\bformula\b/i.test(line) ||
+      /\bcompound\b/i.test(line) ||
+      /\bion\b/i.test(line) ||
+      /\bname\b/i.test(line)
     );
   }
 
@@ -186,65 +212,63 @@ function App() {
     if (!block || block.length === 0) return block;
 
     const firstLine = block[0];
-    const rest = block.slice(1).map(normalizeLine).filter(Boolean);
+    const rest = block
+      .slice(1)
+      .flatMap(line => splitMixedChoiceLine(line))
+      .map(normalizeLine)
+      .filter(Boolean);
 
     const choiceMap = {};
+    const unlabeledLines = [];
     const promptLines = [];
 
     for (const line of rest) {
-      const match = line.match(/^([A-Da-d])[\.\)]\s*(.*)$/);
+      const choice = normalizeChoiceLabel(line);
 
-      if (match) {
-        const label = match[1].toUpperCase();
-        const choiceText = match[2].trim();
+      if (choice) {
+        const cleanedChoiceLine = `${choice.label}. ${choice.text}${choice.isCorrect ? " ***" : ""}`;
 
-        if (!choiceMap[label]) {
-          choiceMap[label] = `${label}. ${choiceText}`;
+        if (!choiceMap[choice.label]) {
+          choiceMap[choice.label] = cleanedChoiceLine;
         }
 
         continue;
       }
 
-      promptLines.push(line);
+      unlabeledLines.push(line);
     }
 
     const labelsFound = Object.keys(choiceMap);
 
-    const labelsFound = Object.keys(choiceMap);
+    if (labelsFound.length > 0 && labelsFound.length < 4) {
+      const missingLabels = REQUIRED_LABELS.filter(label => !choiceMap[label]);
+      const fallbackChoices = unlabeledLines.slice(-missingLabels.length);
+      const possiblePromptLines = unlabeledLines.slice(0, unlabeledLines.length - fallbackChoices.length);
 
-// If we have some labeled choices but not all A-D, try to fix
-if (labelsFound.length > 0 && labelsFound.length < 4) {
+      missingLabels.forEach((label, i) => {
+        if (fallbackChoices[i]) {
+          choiceMap[label] = `${label}. ${fallbackChoices[i]}`;
+        }
+      });
 
-  // collect unlabeled lines as fallback choices
-  const extraChoices = promptLines.slice(-4);
-
-  const combined = [];
-
-  REQUIRED_LABELS.forEach((label, i) => {
-    if (choiceMap[label]) {
-      combined.push(choiceMap[label]);
-    } else if (extraChoices[i]) {
-      combined.push(`${label}. ${extraChoices[i]}`);
+      return [
+        firstLine,
+        ...possiblePromptLines,
+        ...REQUIRED_LABELS
+          .filter(label => choiceMap[label])
+          .map(label => choiceMap[label])
+      ];
     }
-  });
 
-  return [
-    firstLine,
-    ...promptLines.slice(0, -4),
-    ...combined
-  ];
-}
+    if (labelsFound.length === 4) {
+      return [
+        firstLine,
+        ...promptLines,
+        ...REQUIRED_LABELS.map(label => choiceMap[label])
+      ];
+    }
 
-// normal labeled case
-if (labelsFound.length === 4) {
-  return [
-    firstLine,
-    ...promptLines,
-    ...REQUIRED_LABELS.map(label => choiceMap[label])
-  ];
-}
-
-    if (rest.length >= 4) {
+    if (labelsFound.length === 0 && rest.length >= 4) {
       const possibleChoices = rest.slice(-4);
       const possiblePromptLines = rest.slice(0, -4);
 
@@ -355,11 +379,9 @@ if (labelsFound.length === 4) {
     }
 
     if (!question.answer) {
-  foundIssues.push(`Question ${question.sourceNumber}: no correct answer detected (allowed in Quiz mode).`);
-  
-  // Allow question to pass, just mark it
-  question.answer = null;
-}
+      foundIssues.push(`Question ${question.sourceNumber}: no correct answer detected (allowed in Quiz mode).`);
+      question.answer = null;
+    }
 
     if (question.answer && !REQUIRED_LABELS.includes(question.answer)) {
       foundIssues.push(`Question ${question.sourceNumber}: answer must be A, B, C, or D.`);
@@ -422,7 +444,7 @@ if (labelsFound.length === 4) {
     const rawLines = cleaned.split("\n");
 
     const lines = rawLines
-      .flatMap(line => splitInlineChoices(line))
+      .flatMap(line => splitMixedChoiceLine(line))
       .map(normalizeLine)
       .filter(line => line.length > 0)
       .filter(line => !isNoiseLine(line));
@@ -443,6 +465,7 @@ if (labelsFound.length === 4) {
         }
       } else if (looksLikeUnnumberedQuestion(line)) {
         if (currentBlock.length > 0) blocks.push(currentBlock);
+
         currentBlock = [`${autoNumber}. ${line}`];
         autoNumber++;
       } else if (currentBlock.length > 0) {
