@@ -260,15 +260,35 @@ function App() {
       ];
     }
 
-    if (labelsFound.length === 4) {
-      return [
-        firstLine,
-        ...promptLines,
-        ...REQUIRED_LABELS.map(label => choiceMap[label])
-      ];
-    }
+   // Handle fully labeled A-D
+if (labelsFound.length === 4) {
+  return [
+    firstLine,
+    ...promptLines,
+    ...REQUIRED_LABELS.map(label => choiceMap[label])
+  ];
+}
 
-    if (labelsFound.length === 0 && rest.length >= 4) {
+// Handle partially labeled (mixed format)
+if (labelsFound.length > 0 && labelsFound.length < 4) {
+  const missingLabels = REQUIRED_LABELS.filter(label => !choiceMap[label]);
+  const fallbackChoices = promptLines.slice(-missingLabels.length);
+
+  missingLabels.forEach((label, i) => {
+    if (fallbackChoices[i]) {
+      choiceMap[label] = `${label}. ${fallbackChoices[i]}`;
+    }
+  });
+
+  return [
+    firstLine,
+    ...promptLines.slice(0, -missingLabels.length),
+    ...REQUIRED_LABELS.map(label => choiceMap[label]).filter(Boolean)
+  ];
+}
+
+// 🔥 NEW: Handle unlabeled multiple choice
+if (labelsFound.length === 0 && rest.length >= 4) {
   const lastFour = rest.slice(-4);
   const likelyChoices = lastFour.filter(line => line.length < 60);
 
@@ -286,8 +306,8 @@ function App() {
   }
 }
 
-    return [firstLine, ...rest];
-  }
+// fallback
+return [firstLine, ...rest];
 
   function parseQuestionBlock(block, foundIssues) {
     const firstLine = block[0];
