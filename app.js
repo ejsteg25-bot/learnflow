@@ -241,23 +241,29 @@ function App() {
 
   // FIRST: if the last 4 unlabeled lines look like answer choices, use them.
   // This catches questions where choices have no A/B/C/D labels.
-  if (unlabeledLines.length >= 4) {
-    const lastFour = unlabeledLines.slice(-4);
-    const likelyChoices = lastFour.filter(line => line.length < 60);
+  // START: smarter unlabeled choice detection
+for (let i = 0; i <= unlabeledLines.length - 4; i++) {
+  const group = unlabeledLines.slice(i, i + 4);
 
-    if (likelyChoices.length === 4) {
-      const possiblePromptLines = unlabeledLines.slice(0, unlabeledLines.length - 4);
+  const likelyChoices = group.filter(line => line.length < 60);
 
-      return [
-        firstLine,
-        ...possiblePromptLines,
-        `A. ${likelyChoices[0]}`,
-        `B. ${likelyChoices[1]}`,
-        `C. ${likelyChoices[2]}`,
-        `D. ${likelyChoices[3]}`
-      ];
-    }
+  if (likelyChoices.length === 4) {
+    const possiblePromptLines = [
+      ...unlabeledLines.slice(0, i),
+      ...unlabeledLines.slice(i + 4)
+    ];
+
+    return [
+      firstLine,
+      ...possiblePromptLines,
+      `A. ${group[0]}`,
+      `B. ${group[1]}`,
+      `C. ${group[2]}`,
+      `D. ${group[3]}`
+    ];
   }
+}
+// END
 
   // Fully labeled A-D choices.
   if (labelsFound.length === 4) {
