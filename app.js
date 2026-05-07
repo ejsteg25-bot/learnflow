@@ -234,7 +234,7 @@ function App() {
   const choiceMap = {};
   const unlabeledLines = [];
 // START: early unlabeled MC detection (fix for Question 2)
-if (labelsFound.length === 0 && unlabeledLines.length >= 4) {
+if (unlabeledLines.length >= 4) {
   const firstFour = unlabeledLines.slice(0, 4);
 
   const likelyChoices = firstFour.filter(line => line.length < 60);
