@@ -233,21 +233,40 @@ function App() {
 
   const choiceMap = {};
   const unlabeledLines = [];
-// START: early unlabeled MC detection (fix for Question 2)
-if (unlabeledLines.length >= 4) {
-  const firstFour = unlabeledLines.slice(0, 4);
+// START: detect unlabeled answer choices
+if (!readingChoices) {
+  const remaining = block
+    .slice(i)
+    .map(normalizeLine)
+    .filter(l => l && !isNoiseLine(l));
 
-  const likelyChoices = firstFour.filter(line => line.length < 60);
+  if (remaining.length >= 4) {
+    const group = remaining.slice(0, 4);
 
-  if (likelyChoices.length === 4) {
-    return [
-      firstLine,
-      `A. ${firstFour[0]}`,
-      `B. ${firstFour[1]}`,
-      `C. ${firstFour[2]}`,
-      `D. ${firstFour[3]}`
-    ];
+    const looksLikeChoices = group.every(item =>
+      !isQuestionStart(item) &&
+      !isChoiceLine(item) &&
+      !isAnswerLine(item) &&
+      item.length < 60
+    );
+
+    if (looksLikeChoices) {
+      REQUIRED_LABELS.forEach((label, choiceIndex) => {
+        choices[label] = group[choiceIndex].replace(/\*{2,3}/g, "").trim();
+      });
+
+      const correctIndex = group.findIndex(item => /\*{2,3}/.test(item));
+      if (correctIndex >= 0) {
+        answer = REQUIRED_LABELS[correctIndex];
+      }
+
+      readingChoices = true;
+      i += 3;
+      continue;
+    }
   }
+
+  promptLines.push(line);
 }
 // END
     
