@@ -191,9 +191,18 @@ function App() {
   }
 
   function looksLikeUnnumberedQuestion(line) {
-    if (!line || line.length < 10) return false;
-    if (isChoiceLine(line)) return false;
-    if (isNoiseLine(line)) return false;
+  if (!line || line.length < 10) return false;
+
+  // NEW: block matching-style lines
+  if (
+    /\([A-F]\)$/.test(line) ||
+    /^[A-Za-z]+\s*\([A-F]\)/.test(line)
+  ) {
+    return false;
+  }
+
+  if (isChoiceLine(line)) return false;
+  if (isNoiseLine(line)) return false;
 
     return (
       /\?$/.test(line) ||
