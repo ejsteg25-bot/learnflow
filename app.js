@@ -391,35 +391,16 @@ if (unlabeledLines.length >= 4) {
         continue;
       }
 
-      // START: detect early unlabeled choices
+     // START: detect unlabeled answer choices
+if (line.length < 60 && Object.keys(choices).length < 4) {
+  const nextLabel = REQUIRED_LABELS[Object.keys(choices).length];
+
+  choices[nextLabel] = line;
+  readingChoices = true;
+  continue;
+}
+
 if (!readingChoices) {
-
-  // If we already have 1 prompt line and this line is short,
-  // it might actually be a choice, not prompt
-  if (promptLines.length >= 1 && line.length < 60) {
-
-    if (!choices["A"]) {
-      choices["A"] = line;
-      readingChoices = true;
-      continue;
-    }
-
-    if (!choices["B"]) {
-      choices["B"] = line;
-      continue;
-    }
-
-    if (!choices["C"]) {
-      choices["C"] = line;
-      continue;
-    }
-
-    if (!choices["D"]) {
-      choices["D"] = line;
-      continue;
-    }
-  }
-
   promptLines.push(line);
 }
 // END
