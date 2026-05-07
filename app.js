@@ -233,7 +233,24 @@ function App() {
 
   const choiceMap = {};
   const unlabeledLines = [];
+// START: early unlabeled MC detection (fix for Question 2)
+if (labelsFound.length === 0 && unlabeledLines.length >= 4) {
+  const firstFour = unlabeledLines.slice(0, 4);
 
+  const likelyChoices = firstFour.filter(line => line.length < 60);
+
+  if (likelyChoices.length === 4) {
+    return [
+      firstLine,
+      `A. ${firstFour[0]}`,
+      `B. ${firstFour[1]}`,
+      `C. ${firstFour[2]}`,
+      `D. ${firstFour[3]}`
+    ];
+  }
+}
+// END
+    
   for (const line of rest) {
     const choice = normalizeChoiceLabel(line);
 
