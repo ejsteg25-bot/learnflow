@@ -93,9 +93,9 @@ function App() {
   }
 
   function isNoiseLine(line) {
-  const cleaned = line.toLowerCase();
+    const cleaned = line.toLowerCase();
 
-  return (
+    return (
       cleaned === "matching" ||
       cleaned.includes("match each description") ||
       cleaned.includes("column a") ||
@@ -103,10 +103,12 @@ function App() {
       cleaned.includes("do not write on this test") ||
       cleaned.includes("class set") ||
       cleaned.includes("nomenclature test") ||
+      cleaned.includes("periodic table test") ||
       cleaned.includes("chemical reactions test") ||
       cleaned.includes("aca chemistry") ||
       cleaned.includes("directions:") ||
       cleaned.includes("multiple choice:") ||
+      cleaned.includes("multiple choice") ||
       cleaned.includes("answer the following questions") ||
       cleaned.includes("scantron") ||
       cleaned.includes("free response") ||
@@ -191,18 +193,17 @@ function App() {
   }
 
   function looksLikeUnnumberedQuestion(line) {
-  if (!line || line.length < 10) return false;
+    if (!line || line.length < 10) return false;
 
-  // NEW: block matching-style lines
-  if (
-    /\([A-F]\)$/.test(line) ||
-    /^[A-Za-z]+\s*\([A-F]\)/.test(line)
-  ) {
-    return false;
-  }
+    if (
+      /\([A-F]\)$/.test(line) ||
+      /^[A-Za-z]+\s*\([A-F]\)/.test(line)
+    ) {
+      return false;
+    }
 
-  if (isChoiceLine(line)) return false;
-  if (isNoiseLine(line)) return false;
+    if (isChoiceLine(line)) return false;
+    if (isNoiseLine(line)) return false;
 
     return (
       /\?$/.test(line) ||
@@ -217,134 +218,73 @@ function App() {
       /\bformula\b/i.test(line) ||
       /\bcompound\b/i.test(line) ||
       /\bion\b/i.test(line) ||
-      /\bname\b/i.test(line)
+      /\bname\b/i.test(line) ||
+      /\bproperties\b/i.test(line) ||
+      /\bcharacteristic\b/i.test(line)
     );
   }
 
   function normalizeQuestionBlock(block) {
-  if (!block || block.length === 0) return block;
+    if (!block || block.length === 0) return block;
 
-  const firstLine = block[0];
-  const rest = block
-    .slice(1)
-    .flatMap(line => splitMixedChoiceLine(line))
-    .map(normalizeLine)
-    .filter(Boolean);
+    const firstLine = block[0];
+    const rest = block
+      .slice(1)
+      .flatMap(line => splitMixedChoiceLine(line))
+      .map(normalizeLine)
+      .filter(Boolean);
 
-  const choiceMap = {};
-  const unlabeledLines = [];
-// START: detect unlabeled answer choices
-if (!readingChoices) {
-  const remaining = block
-    .slice(i)
-    .map(normalizeLine)
-    .filter(l => l && !isNoiseLine(l));
+    const choiceMap = {};
+    const unlabeledLines = [];
 
-  if (remaining.length >= 4) {
-    const group = remaining.slice(0, 4);
+    for (const line of rest) {
+      const choice = normalizeChoiceLabel(line);
 
-    const looksLikeChoices = group.every(item =>
-      !isQuestionStart(item) &&
-      !isChoiceLine(item) &&
-      !isAnswerLine(item) &&
-      item.length < 60
-    );
+      if (choice) {
+        const cleanedChoiceLine = `${choice.label}. ${choice.text}${choice.isCorrect ? " ***" : ""}`;
 
-    if (looksLikeChoices) {
-      REQUIRED_LABELS.forEach((label, choiceIndex) => {
-        choices[label] = group[choiceIndex].replace(/\*{2,3}/g, "").trim();
-      });
+        if (!choiceMap[choice.label]) {
+          choiceMap[choice.label] = cleanedChoiceLine;
+        }
 
-      const correctIndex = group.findIndex(item => /\*{2,3}/.test(item));
-      if (correctIndex >= 0) {
-        answer = REQUIRED_LABELS[correctIndex];
+        continue;
       }
 
-      readingChoices = true;
-      i += 3;
-      continue;
-    }
-  }
-
-  promptLines.push(line);
-}
-// END
-    
-  for (const line of rest) {
-    const choice = normalizeChoiceLabel(line);
-
-    if (choice) {
-      const cleanedChoiceLine = `${choice.label}. ${choice.text}${choice.isCorrect ? " ***" : ""}`;
-
-      if (!choiceMap[choice.label]) {
-        choiceMap[choice.label] = cleanedChoiceLine;
-      }
-
-      continue;
+      unlabeledLines.push(line);
     }
 
-    unlabeledLines.push(line);
-  }
+    const labelsFound = Object.keys(choiceMap);
 
-  const labelsFound = Object.keys(choiceMap);
-
-  // FIRST: if the last 4 unlabeled lines look like answer choices, use them.
-  // This catches questions where choices have no A/B/C/D labels.
-if (unlabeledLines.length >= 4) {
-  for (let i = 0; i <= unlabeledLines.length - 4; i++) {
-    const group = unlabeledLines.slice(i, i + 4);
-    const likelyChoices = group.filter(line => line.length < 60);
-
-    if (likelyChoices.length === 4) {
-      const possiblePromptLines = [
-        ...unlabeledLines.slice(0, i),
-        ...unlabeledLines.slice(i + 4)
+    if (labelsFound.length === 4) {
+      return [
+        firstLine,
+        ...unlabeledLines,
+        ...REQUIRED_LABELS.map(label => choiceMap[label])
       ];
+    }
+
+    if (labelsFound.length > 0 && labelsFound.length < 4) {
+      const missingLabels = REQUIRED_LABELS.filter(label => !choiceMap[label]);
+      const fallbackChoices = unlabeledLines.slice(-missingLabels.length);
+      const possiblePromptLines = unlabeledLines.slice(0, unlabeledLines.length - fallbackChoices.length);
+
+      missingLabels.forEach((label, i) => {
+        if (fallbackChoices[i]) {
+          choiceMap[label] = `${label}. ${fallbackChoices[i]}`;
+        }
+      });
 
       return [
         firstLine,
         ...possiblePromptLines,
-        `A. ${group[0]}`,
-        `B. ${group[1]}`,
-        `C. ${group[2]}`,
-        `D. ${group[3]}`
+        ...REQUIRED_LABELS
+          .filter(label => choiceMap[label])
+          .map(label => choiceMap[label])
       ];
     }
+
+    return [firstLine, ...rest];
   }
-}
-
-  // Fully labeled A-D choices.
-  if (labelsFound.length === 4) {
-    return [
-      firstLine,
-      ...unlabeledLines,
-      ...REQUIRED_LABELS.map(label => choiceMap[label])
-    ];
-  }
-
-  // Mixed format: some labels exist, some choices are unlabeled.
-  if (labelsFound.length > 0 && labelsFound.length < 4) {
-    const missingLabels = REQUIRED_LABELS.filter(label => !choiceMap[label]);
-    const fallbackChoices = unlabeledLines.slice(-missingLabels.length);
-    const possiblePromptLines = unlabeledLines.slice(0, unlabeledLines.length - fallbackChoices.length);
-
-    missingLabels.forEach((label, i) => {
-      if (fallbackChoices[i]) {
-        choiceMap[label] = `${label}. ${fallbackChoices[i]}`;
-      }
-    });
-
-    return [
-      firstLine,
-      ...possiblePromptLines,
-      ...REQUIRED_LABELS
-        .filter(label => choiceMap[label])
-        .map(label => choiceMap[label])
-    ];
-  }
-
-  return [firstLine, ...rest];
-}
 
   function parseQuestionBlock(block, foundIssues) {
     const firstLine = block[0];
@@ -410,19 +350,40 @@ if (unlabeledLines.length >= 4) {
         continue;
       }
 
-     // START: detect unlabeled answer choices
-if (line.length < 60 && Object.keys(choices).length < 4) {
-  const nextLabel = REQUIRED_LABELS[Object.keys(choices).length];
+      if (!readingChoices) {
+        const remaining = block
+          .slice(i)
+          .map(normalizeLine)
+          .filter(l => l && !isNoiseLine(l));
 
-  choices[nextLabel] = line;
-  readingChoices = true;
-  continue;
-}
+        if (remaining.length >= 4) {
+          const group = remaining.slice(0, 4);
 
-if (!readingChoices) {
-  promptLines.push(line);
-}
-// END
+          const looksLikeChoices = group.every(item =>
+            !isQuestionStart(item) &&
+            !isChoiceLine(item) &&
+            !isAnswerLine(item) &&
+            item.length < 60
+          );
+
+          if (looksLikeChoices) {
+            REQUIRED_LABELS.forEach((label, choiceIndex) => {
+              choices[label] = group[choiceIndex].replace(/\*{2,3}/g, "").trim();
+            });
+
+            const correctIndex = group.findIndex(item => /\*{2,3}/.test(item));
+            if (correctIndex >= 0) {
+              answer = REQUIRED_LABELS[correctIndex];
+            }
+
+            readingChoices = true;
+            i += 3;
+            continue;
+          }
+        }
+
+        promptLines.push(line);
+      }
     }
 
     return {
@@ -443,9 +404,9 @@ if (!readingChoices) {
     if (!question.prompt || question.prompt.length < 3) valid = false;
 
     if (Object.keys(question.choices).length === 0) {
-    return false;
+      return false;
     }
-    
+
     for (const label of REQUIRED_LABELS) {
       if (!question.choices[label] || question.choices[label].trim().length === 0) {
         foundIssues.push(`Question ${question.sourceNumber}: missing choice ${label}.`);
@@ -473,7 +434,6 @@ if (!readingChoices) {
       const copy = { ...question };
 
       if (seenSourceNumbers.has(copy.sourceNumber)) {
-        foundIssues.push(`Question ${copy.sourceNumber}: duplicate source number detected.`);
         copy.valid = false;
         return copy;
       }
