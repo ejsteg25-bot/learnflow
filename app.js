@@ -241,7 +241,6 @@ function App() {
 
   // FIRST: if the last 4 unlabeled lines look like answer choices, use them.
   // This catches questions where choices have no A/B/C/D labels.
-  // START: smarter unlabeled choice detection
 for (let i = 0; i <= unlabeledLines.length - 4; i++) {
   const group = unlabeledLines.slice(i, i + 4);
 
@@ -263,7 +262,6 @@ for (let i = 0; i <= unlabeledLines.length - 4; i++) {
     ];
   }
 }
-// END
 
   // Fully labeled A-D choices.
   if (labelsFound.length === 4) {
