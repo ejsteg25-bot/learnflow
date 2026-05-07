@@ -93,9 +93,13 @@ function App() {
   }
 
   function isNoiseLine(line) {
-    const cleaned = line.toLowerCase();
+  const cleaned = line.toLowerCase();
 
-    return (
+  return (
+      cleaned === "matching" ||
+      cleaned.includes("match each description") ||
+      cleaned.includes("column a") ||
+      cleaned.includes("column b") ||
       cleaned.includes("do not write on this test") ||
       cleaned.includes("class set") ||
       cleaned.includes("nomenclature test") ||
