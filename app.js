@@ -2,59 +2,27 @@ const { useState } = React;
 
 function App() {
   const [text, setText] = useState("");
-  const [questions, setQuestions] = useState([]);
-  const [index, setIndex] = useState(0);
-  const [issues, setIssues] = useState([]);
-  const [selectedAnswers, setSelectedAnswers] = useState({});
+  const [blocks, setBlocks] = useState([]);
   const [mode, setMode] = useState(null);
-  const [reteachInput, setReteachInput] = useState("");
-  const [reteachMessage, setReteachMessage] = useState("");
+  const [index, setIndex] = useState(0);
 
   const REQUIRED_LABELS = ["A", "B", "C", "D"];
 
   // ===============================
   // FILE UPLOAD
   // ===============================
-  async function handleFileUpload(event) {
-    const file = event.target.files[0];
+  async function handleFileUpload(e) {
+    const file = e.target.files[0];
     if (!file) return;
 
-    resetSession();
-
-    if (!file.name.toLowerCase().endsWith(".docx")) {
-      setIssues(["Only .docx files are supported."]);
-      return;
-    }
-
     if (typeof mammoth === "undefined") {
-      setIssues(["Mammoth not loaded."]);
+      alert("Mammoth not loaded");
       return;
     }
 
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const result = await mammoth.extractRawText({ arrayBuffer });
-
-      if (!result.value || !result.value.trim()) {
-        setIssues(["No usable text found."]);
-        return;
-      }
-
-      setText(result.value);
-      setIssues(["DOCX loaded. Click Analyze."]);
-    } catch {
-      setIssues(["Error reading DOCX file."]);
-    }
-  }
-
-  function resetSession() {
-    setQuestions([]);
-    setIndex(0);
-    setIssues([]);
-    setSelectedAnswers({});
-    setMode(null);
-    setReteachInput("");
-    setReteachMessage("");
+    const buffer = await file.arrayBuffer();
+    const result = await mammoth.extractRawText({ arrayBuffer: buffer });
+    setText(result.value || "");
   }
 
   // ===============================
@@ -66,7 +34,6 @@ function App() {
       .replace(/[“”]/g, '"')
       .replace(/[‘’]/g, "'")
       .replace(/\u00a0/g, " ")
-      .replace(/→/g, "->")
       .trim();
   }
 
@@ -74,275 +41,253 @@ function App() {
     return l.replace(/\s+/g, " ").trim();
   }
 
-  function verticalizeChoices(value) {
-    return value
-      .replace(/\s+([B-Da-d])[\.\)]\s+/g, "\n$1. ")
-      .replace(/\s+([A-Da-d])[\.\)]{2,}\s*/g, "\n$1. ");
-  }
-
-  function isNoiseLine(l) {
-    const c = l.toLowerCase();
-    return (
-      c === "" ||
-      c === "matching" ||
-      c.includes("column a") ||
-      c.includes("column b") ||
-      c.includes("name:") ||
-      c.includes("date:") ||
-      c.includes("page")
-    );
+  function verticalizeChoices(v) {
+    return v.replace(/(\s{2,}|\t)([A-Ea-e][.)]\s+)/g, "\n$2");
   }
 
   function isQuestionStart(line) {
-    return /^\s*(?:question\s*)?\d+[.)]\s*/i.test(line);
-  }
-
-  function getQuestionStart(line) {
-    const match = line.match(/^\s*(?:question\s*)?(\d+)[.)]\s*(.*)$/i);
-    return match
-      ? { sourceNumber: match[1], promptStart: match[2].trim() }
-      : null;
+    return /^(?:\d{1,3})[.)]\s+[A-Z]/.test(line);
   }
 
   function parseChoiceLine(line) {
-    const match = line.match(/^\s*([A-Da-d])[\.\)]\s*(.*)$/);
-    if (!match) return null;
+    const m = line.match(/^\s*([A-E])[\.)]\s*(.*)$/i);
+    if (!m) return null;
 
-    let text = match[2].trim();
+    let text = m[2];
     const isCorrect = /\*{2,3}/.test(text);
 
     text = text.replace(/\*{2,3}/g, "").trim();
 
-    return {
-      label: match[1].toUpperCase(),
-      text,
-      isCorrect
-    };
+    return { label: m[1].toUpperCase(), text, isCorrect };
   }
 
   function parseAnswerLine(line) {
-    const match = line.match(/^answer\s*:\s*([A-D])/i);
-    return match ? match[1].toUpperCase() : null;
-  }
-
-  function shuffleArray(arr) {
-    const copy = [...arr];
-    for (let i = copy.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [copy[i], copy[j]] = [copy[j], copy[i]];
-    }
-    return copy;
+    const m = line.match(/answer.*?\b([A-E])\b/i);
+    return m ? m[1].toUpperCase() : null;
   }
 
   // ===============================
-  // PARSER (PHASE 1 + ANSWER KEY)
+  // ANSWER KEY EXTRACTION (HARD STOP)
+  // ===============================
+  function extractAnswerKey(text) {
+    const lines = text.split("\n");
+    let keyMode = false;
+
+    const kept = [];
+    const map = {};
+
+    for (let line of lines) {
+      const l = normalizeLine(line).toLowerCase();
+
+      if (!keyMode && (
+        l === "answer key" ||
+        l === "answers" ||
+        l.includes("answer key")
+      )) {
+        keyMode = true;
+        continue;
+      }
+
+      if (keyMode) {
+        const m = line.match(/^(\d+).*?\b([A-E])\b/i);
+        if (m) map[m[1]] = m[2].toUpperCase();
+        continue;
+      }
+
+      kept.push(line);
+    }
+
+    return {
+      cleanedText: kept.join("\n"),
+      answerKey: map
+    };
+  }
+
+  // ===============================
+  // CLASSIFICATION ENGINE
+  // ===============================
+  function classifyBlock(block, seenNumbers, seenText) {
+    const result = {
+      primaryStatus: "",
+      diagnostic: null
+    };
+
+    const sig = block.prompt.toLowerCase().replace(/\s+/g, "");
+
+    if (seenNumbers.has(block.sourceNumber) || seenText.has(sig)) {
+      result.primaryStatus = "Duplicate";
+      result.diagnostic = "Duplicate";
+      return result;
+    }
+
+    if (/\[insert graphic/i.test(block.rawText)) {
+      result.primaryStatus = "Visual Required";
+      return result;
+    }
+
+    if (/drag|hot spot|move/i.test(block.rawText)) {
+      result.primaryStatus = "Interactive";
+      return result;
+    }
+
+    if (/select two|select all/i.test(block.rawText)) {
+      result.primaryStatus = "Multi-Select";
+      return result;
+    }
+
+    const count = Object.keys(block.choices).length;
+    const hasAD = REQUIRED_LABELS.every(l => block.choices[l]);
+
+    if (count === 4 && hasAD) {
+      result.primaryStatus = block.answer ? "Ready" : "Needs Review";
+      if (!block.answer) result.diagnostic = "Missing answer";
+    } else {
+      result.primaryStatus = "Needs Review";
+      result.diagnostic = "Bad choices";
+    }
+
+    return result;
+  }
+
+  // ===============================
+  // PARSER
   // ===============================
   function parse() {
-    setMode(null);
-    setSelectedAnswers({});
-    setIndex(0);
+    const cleaned = cleanText(text);
+    const { cleanedText, answerKey } = extractAnswerKey(cleaned);
 
-    const foundIssues = [];
-
-    function extractAnswerKeyAndCleanText(value) {
-      const lines = value.split("\n");
-      const keptLines = [];
-      const answerKey = {};
-      let inKey = false;
-
-      lines.forEach(line => {
-        const clean = normalizeLine(line);
-        const lower = clean.toLowerCase();
-
-        if (
-          lower === "answer key" ||
-          lower === "answers" ||
-          lower.startsWith("answer key:")
-        ) {
-          inKey = true;
-          return;
-        }
-
-        if (inKey) {
-          if (isQuestionStart(clean) && clean.length > 10) {
-            inKey = false;
-            keptLines.push(line);
-            return;
-          }
-
-          const match = clean.match(/^(\d+)[.)]?\s*[-:]?\s*([A-D])/i);
-          if (match) {
-            answerKey[match[1]] = match[2].toUpperCase();
-          }
-          return;
-        }
-
-        keptLines.push(line);
-      });
-
-      return {
-        cleanedText: keptLines.join("\n"),
-        answerKey
-      };
-    }
-
-    const extracted = extractAnswerKeyAndCleanText(cleanText(text));
-    const raw = extracted.cleanedText;
-    const externalKey = extracted.answerKey;
-
-    const lines = verticalizeChoices(raw)
+    const lines = verticalizeChoices(cleanedText)
       .split("\n")
       .map(normalizeLine)
-      .filter(l => l && !isNoiseLine(l));
+      .filter(l => l);
 
-    const blocks = [];
+    const rawBlocks = [];
     let current = null;
 
     lines.forEach(line => {
       if (isQuestionStart(line)) {
-        if (current) blocks.push(current);
-        current = { lines: [line] };
+        if (current) rawBlocks.push(current);
+        current = [line];
       } else if (current) {
-        current.lines.push(line);
+        current.push(line);
       }
     });
-    if (current) blocks.push(current);
 
-    const parsed = blocks.map(block => {
-      const qData = getQuestionStart(block.lines[0]);
-      if (!qData) return null;
+    if (current) rawBlocks.push(current);
 
-      let promptLines = [qData.promptStart];
-      let choices = {};
+    const seenNumbers = new Set();
+    const seenText = new Set();
+
+    const parsed = rawBlocks.map(block => {
+      const first = block[0].match(/^(\d+)/);
+      if (!first) return null;
+
+      const num = first[1];
+
+      const choices = {};
       let answer = null;
-      let unlabeled = [];
+      let prompt = block[0].replace(/^\d+[.)]\s*/, "");
 
-      block.lines.slice(1).forEach(line => {
+      block.slice(1).forEach(line => {
         const c = parseChoiceLine(line);
 
         if (c) {
           choices[c.label] = c.text;
           if (c.isCorrect) answer = c.label;
-        } else if (/^answer/i.test(line)) {
-          const key = parseAnswerLine(line);
-          if (key) answer = key;
+        } else if (/answer/i.test(line)) {
+          const k = parseAnswerLine(line);
+          if (k) answer = k;
         } else {
-          promptLines.push(line);
-          unlabeled.push(line);
+          prompt += " " + line;
         }
       });
 
-      // fallback unlabeled
-      if (Object.keys(choices).length === 0 && unlabeled.length >= 4) {
-        const last4 = unlabeled.slice(-4);
+      const finalAnswer = answer || answerKey[num] || null;
 
-        REQUIRED_LABELS.forEach((l, i) => {
-          let t = last4[i];
-          if (/\*{2,3}/.test(t)) {
-            answer = l;
-            t = t.replace(/\*{2,3}/g, "").trim();
-          }
-          choices[l] = t;
-        });
-
-        promptLines = promptLines.slice(0, -4);
-      }
-
-      return {
-        sourceNumber: qData.sourceNumber,
-        prompt: promptLines.join(" ").trim(),
+      const obj = {
+        sourceNumber: num,
+        prompt,
         choices,
-        answer: answer || externalKey[qData.sourceNumber] || null
+        answer: finalAnswer,
+        rawText: block.join("\n")
       };
+
+      obj.classification = classifyBlock(obj, seenNumbers, seenText);
+
+      seenNumbers.add(num);
+      seenText.add(prompt.toLowerCase().replace(/\s+/g, ""));
+
+      return obj;
     }).filter(Boolean);
 
-    const valid = parsed.filter(q =>
-      q.prompt.length > 5 &&
-      REQUIRED_LABELS.every(l => q.choices[l])
-    );
-
-    setQuestions(valid);
-    setIssues([`Parsed ${valid.length} questions.`]);
+    setBlocks(parsed);
+    setMode("Dashboard");
   }
-
-  // ===============================
-  // NAVIGATION
-  // ===============================
-  function startMode(m) {
-    setMode(m);
-    setIndex(0);
-    setSelectedAnswers({});
-    if (m === "Quiz" || m === "Tutor") {
-      setQuestions(prev => shuffleArray(prev));
-    }
-  }
-
-  function backToModes() {
-    setMode(null);
-    setIndex(0);
-  }
-
-  function nextQuestion() {
-    setIndex(i => Math.min(i + 1, questions.length - 1));
-  }
-
-  function previousQuestion() {
-    setIndex(i => Math.max(i - 1, 0));
-  }
-
-  function startReteach() {
-    const idx = questions.findIndex(q => q.sourceNumber === reteachInput);
-    if (idx === -1) {
-      setReteachMessage("Not found");
-      return;
-    }
-    setIndex(idx);
-  }
-
-  function setAnswerKey(label) {
-    const updated = [...questions];
-    updated[index].answer = label;
-    setQuestions(updated);
-  }
-
-  const currentQuestion = questions[index];
 
   // ===============================
   // UI
   // ===============================
-  return React.createElement("div", { className: "p-6 max-w-4xl mx-auto" },
+  function counts() {
+    const c = {
+      Ready: 0,
+      "Needs Review": 0,
+      Duplicate: 0,
+      "Visual Required": 0,
+      Interactive: 0,
+      "Multi-Select": 0
+    };
+
+    blocks.forEach(b => c[b.classification.primaryStatus]++);
+    return c;
+  }
+
+  const c = counts();
+  const current = blocks[index];
+
+  return React.createElement("div", { style: { padding: 20, fontFamily: "sans-serif" } },
 
     React.createElement("h1", null, "LearnFlow"),
 
-    questions.length === 0 &&
-      React.createElement("div", null,
-        React.createElement("input", { type: "file", onChange: handleFileUpload }),
-        React.createElement("textarea", { value: text, onChange: e => setText(e.target.value) }),
-        React.createElement("button", { onClick: parse }, "Analyze")
-      ),
+    !mode && React.createElement("div", null,
+      React.createElement("input", { type: "file", onChange: handleFileUpload }),
+      React.createElement("textarea", {
+        value: text,
+        onChange: e => setText(e.target.value),
+        style: { width: "100%", height: 200 }
+      }),
+      React.createElement("button", { onClick: parse }, "Analyze")
+    ),
 
-    questions.length > 0 && !mode &&
-      React.createElement("div", null,
-        questions.map((q, i) =>
-          React.createElement("div", { key: i },
-            q.sourceNumber, " - ", q.answer || "MISSING",
-            React.createElement("button", { onClick: () => { setIndex(i); setMode("Editor"); } }, "Edit")
-          )
-        ),
-        React.createElement("button", { onClick: () => startMode("Quiz") }, "Quiz")
-      ),
+    mode === "Dashboard" && React.createElement("div", null,
 
-    mode === "Editor" &&
-      React.createElement("div", null,
-        currentQuestion.prompt,
-        REQUIRED_LABELS.map(l =>
+      React.createElement("pre", null, JSON.stringify(c, null, 2)),
+
+      blocks.map((b, i) =>
+        React.createElement("div", { key: i },
+          `Q${b.sourceNumber} - ${b.classification.primaryStatus}`,
           React.createElement("button", {
-            key: l,
-            onClick: () => setAnswerKey(l)
-          }, l + ". " + currentQuestion.choices[l])
-        ),
-        React.createElement("button", { onClick: backToModes }, "Back")
+            onClick: () => { setIndex(i); setMode("Editor"); }
+          }, "Edit")
+        )
       )
+    ),
+
+    mode === "Editor" && current && React.createElement("div", null,
+      React.createElement("h3", null, current.prompt),
+
+      REQUIRED_LABELS.map(l =>
+        React.createElement("button", {
+          key: l,
+          onClick: () => {
+            const copy = [...blocks];
+            copy[index].answer = l;
+            setBlocks(copy);
+          }
+        }, `${l}. ${current.choices[l] || ""}`)
+      ),
+
+      React.createElement("button", { onClick: () => setMode("Dashboard") }, "Back")
+    )
   );
 }
 
