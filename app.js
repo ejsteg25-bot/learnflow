@@ -5,7 +5,6 @@ function App() {
   const [questions, setQuestions] = useState([]);
   const [index, setIndex] = useState(0);
   const [issues, setIssues] = useState([]);
-  const [blocked, setBlocked] = useState(false);
   const [selectedAnswers, setSelectedAnswers] = useState({});
   const [mode, setMode] = useState(null);
   const [reteachInput, setReteachInput] = useState("");
@@ -21,7 +20,6 @@ function App() {
 
     if (!file.name.toLowerCase().endsWith(".docx")) {
       setIssues(["Only .docx files are supported right now."]);
-      setBlocked(true);
       return;
     }
 
@@ -29,7 +27,6 @@ function App() {
       setIssues([
         "DOCX reader is not loaded. Make sure mammoth.browser.min.js is included in index.html before app.js."
       ]);
-      setBlocked(true);
       return;
     }
 
@@ -40,30 +37,116 @@ function App() {
       if (!result.value || !result.value.trim()) {
         setText("");
         setIssues(["The DOCX file was read, but no usable text was found."]);
-        setBlocked(true);
         return;
       }
 
       setText(result.value);
-      setIssues([
-        "DOCX uploaded successfully. Review the extracted text before clicking Analyze Material."
-      ]);
-      setBlocked(false);
+      setIssues(["DOCX uploaded successfully. Review the text, then click Analyze Material."]);
     } catch (error) {
-      setIssues([
-        "The DOCX file could not be read. Try saving it again as a clean .docx file."
-      ]);
-      setBlocked(true);
+      setIssues(["The DOCX file could not be read. Try saving it again as a clean .docx file."]);
     }
   }
 
   function resetSession() {
     setQuestions([]);
-    setSelectedAnswers({});
     setIndex(0);
+    setIssues([]);
+    setSelectedAnswers({});
     setMode(null);
     setReteachInput("");
     setReteachMessage("");
+  }
+
+  function cleanText(value) {
+    return value
+      .replace(/\r/g, "")
+      .replace(/[“”]/g, '"')
+      .replace(/[‘’]/g, "'")
+      .replace(/\u00a0/g, " ")
+      .replace(/→/g, "->")
+      .trim();
+  }
+
+  function normalizeLine(line) {
+    return line.replace(/\s+/g, " ").trim();
+  }
+
+  function verticalizeChoices(value) {
+    return value
+      .replace(/\s+([B-Da-d])[\.\)]\s+/g, "\n$1. ")
+      .replace(/\s+([A-Da-d])[\.\)]{2,}\s*/g, "\n$1. ");
+  }
+
+  function isNoiseLine(line) {
+    const cleaned = line.toLowerCase().trim();
+
+    return (
+      cleaned === "" ||
+      cleaned === "matching" ||
+      cleaned === "multiple choice" ||
+      cleaned.includes("match each description") ||
+      cleaned.includes("column a") ||
+      cleaned.includes("column b") ||
+      cleaned.includes("do not write on this test") ||
+      cleaned.includes("class set") ||
+      cleaned.includes("name:") ||
+      cleaned.includes("date:") ||
+      cleaned.includes("period:") ||
+      cleaned.includes("page ") ||
+      cleaned.includes("more on back") ||
+      cleaned.includes("directions:") ||
+      cleaned.includes("multiple choice:") ||
+      cleaned.includes("free response") ||
+      cleaned.includes("scantron")
+    );
+  }
+
+  function isQuestionStart(line) {
+    return /^\s*(?:question\s*)?\d+[.)]\s*/i.test(line);
+  }
+
+  function getQuestionStart(line) {
+    const match = line.match(/^\s*(?:question\s*)?(\d+)[.)]\s*(.*)$/i);
+    if (!match) return null;
+
+    return {
+      sourceNumber: match[1],
+      promptStart: match[2].trim()
+    };
+  }
+
+  function isChoiceLine(line) {
+    return /^\s*[A-Da-d][\.\)]\s*/.test(line);
+  }
+
+  function parseChoiceLine(line) {
+    const match = line.match(/^\s*([A-Da-d])[\.\)]\s*(.*)$/);
+    if (!match) return null;
+
+    const label = match[1].toUpperCase();
+    let text = match[2].trim();
+
+    const isCorrect = /\*{2,3}/.test(text);
+    text = text.replace(/\*{2,3}/g, "").trim();
+
+    return {
+      label,
+      text,
+      isCorrect
+    };
+  }
+
+  function isAnswerLine(line) {
+    return /^answer\s*:/i.test(line);
+  }
+
+  function parseAnswerLine(line) {
+    const match = line.match(/^answer\s*:\s*([A-Da-d])/i);
+    return match ? match[1].toUpperCase() : null;
+  }
+
+  function looksLikeMatchingLine(line) {
+    return /\([A-F]\)$/.test(line) || /^[A-Za-z\s]+\([A-F]\)/.test(line);
   }
 
   function shuffleArray(array) {
@@ -77,376 +160,130 @@ function App() {
     return copy;
   }
 
-  function cleanText(value) {
-    return value
-      .replace(/\r/g, "")
-      .replace(/[“”]/g, '"')
-      .replace(/[‘’]/g, "'")
-      .replace(/\u00a0/g, " ")
-      .replace(/→/g, "->")
-      .replace(/\s+\n/g, "\n")
-      .trim();
-  }
+  function parse() {
+    setMode(null);
+    setSelectedAnswers({});
+    setReteachInput("");
+    setReteachMessage("");
+    setIndex(0);
 
-  function normalizeLine(line) {
-    return line.replace(/\s+/g, " ").trim();
-  }
+    const foundIssues = [];
+    const rawCleaned = cleanText(text);
+    const verticalized = verticalizeChoices(rawCleaned);
 
-  function isNoiseLine(line) {
-    const cleaned = line.toLowerCase();
-
-    return (
-      cleaned === "matching" ||
-      cleaned.includes("match each description") ||
-      cleaned.includes("column a") ||
-      cleaned.includes("column b") ||
-      cleaned.includes("do not write on this test") ||
-      cleaned.includes("class set") ||
-      cleaned.includes("nomenclature test") ||
-      cleaned.includes("periodic table test") ||
-      cleaned.includes("chemical reactions test") ||
-      cleaned.includes("aca chemistry") ||
-      cleaned.includes("directions:") ||
-      cleaned.includes("multiple choice:") ||
-      cleaned.includes("multiple choice") ||
-      cleaned.includes("answer the following questions") ||
-      cleaned.includes("scantron") ||
-      cleaned.includes("free response") ||
-      cleaned.includes("more on back")
-    );
-  }
-
-  function splitMixedChoiceLine(line) {
-    const clean = normalizeLine(line);
-    const pattern = /(^|\s)([A-Da-d])[\.\)]{1,2}\s*/g;
-    const matches = [];
-    let match;
-
-    while ((match = pattern.exec(clean)) !== null) {
-      matches.push({
-        start: match.index + match[1].length,
-        label: match[2].toUpperCase()
-      });
+    if (!verticalized) {
+      setQuestions([]);
+      setIssues(["No text provided. Please upload a file or paste text."]);
+      return;
     }
 
-    if (matches.length === 0) {
-      return [clean];
-    }
+    const lines = verticalized
+      .split("\n")
+      .map(normalizeLine)
+      .filter(line => line.length > 0)
+      .filter(line => !isNoiseLine(line))
+      .filter(line => !looksLikeMatchingLine(line));
 
-    const parts = [];
-    const firstStart = matches[0].start;
+    const blocks = [];
+    let currentBlock = null;
 
-    if (firstStart > 0) {
-      const prefix = clean.slice(0, firstStart).trim();
-      if (prefix) parts.push(prefix);
-    }
+    lines.forEach(line => {
+      if (isQuestionStart(line)) {
+        if (currentBlock) blocks.push(currentBlock);
+        currentBlock = { lines: [line] };
+      } else if (currentBlock) {
+        currentBlock.lines.push(line);
+      }
+    });
 
-    for (let i = 0; i < matches.length; i++) {
-      const start = matches[i].start;
-      const end = i + 1 < matches.length ? matches[i + 1].start : clean.length;
-      const piece = clean.slice(start, end).trim();
+    if (currentBlock) blocks.push(currentBlock);
 
-      if (piece) {
-        const fixedPiece = piece.replace(/^([A-Da-d])[\.\)]{1,2}\s*/, (m, label) => {
-          return label.toUpperCase() + ". ";
+    const parsedQuestions = blocks
+      .map(block => {
+        const firstLine = block.lines[0];
+        const qData = getQuestionStart(firstLine);
+
+        if (!qData) return null;
+
+        let promptLines = [];
+        let extractedChoices = {};
+        let extractedAnswer = null;
+        let potentialUnlabeledChoices = [];
+
+        if (qData.promptStart) {
+          promptLines.push(qData.promptStart);
+        }
+
+        block.lines.slice(1).forEach(line => {
+          const choiceMatch = parseChoiceLine(line);
+
+          if (choiceMatch) {
+            extractedChoices[choiceMatch.label] = choiceMatch.text;
+            if (choiceMatch.isCorrect) extractedAnswer = choiceMatch.label;
+          } else if (isAnswerLine(line)) {
+            const key = parseAnswerLine(line);
+            if (key) extractedAnswer = key;
+          } else {
+            promptLines.push(line);
+            potentialUnlabeledChoices.push(line);
+          }
         });
 
-        parts.push(fixedPiece);
-      }
-    }
+        if (
+          Object.keys(extractedChoices).length === 0 &&
+          potentialUnlabeledChoices.length >= 4
+        ) {
+          const choiceSlice = potentialUnlabeledChoices.slice(-4);
 
-    return parts.length > 0 ? parts : [clean];
-  }
+          REQUIRED_LABELS.forEach((label, idx) => {
+            let choiceText = choiceSlice[idx];
 
-  function isQuestionStart(line) {
-    return /^\s*\d+\.\s*[A-Za-z0-9]/.test(line);
-  }
-
-  function isChoiceLine(line) {
-    return /^\s*[A-Da-d][\.\)]{1,2}\s*/.test(line);
-  }
-
-  function isAnswerLine(line) {
-    return /^ANSWER\s*:/i.test(line);
-  }
-
-  function normalizeChoiceLabel(line) {
-    const match = line.match(/^\s*([A-Da-d])[\.\)]{1,2}\s*(.*)$/);
-    if (!match) return null;
-
-    const label = match[1].toUpperCase();
-    let choiceText = match[2].trim();
-
-    const isCorrect = /\*{2,3}/.test(choiceText);
-    choiceText = choiceText.replace(/\*{2,3}/g, "").trim();
-
-    return {
-      label,
-      text: choiceText,
-      isCorrect
-    };
-  }
-
-  function extractAnswerFromLine(line) {
-    const match = line.match(/^ANSWER\s*:\s*([A-Da-d])/i);
-    return match ? match[1].toUpperCase() : null;
-  }
-
-  function looksLikeUnnumberedQuestion(line) {
-    if (!line || line.length < 10) return false;
-
-    if (
-      /\([A-F]\)$/.test(line) ||
-      /^[A-Za-z]+\s*\([A-F]\)/.test(line)
-    ) {
-      return false;
-    }
-
-    if (isChoiceLine(line)) return false;
-    if (isNoiseLine(line)) return false;
-
-    return (
-      /\?$/.test(line) ||
-      /\bwhich\b/i.test(line) ||
-      /\bwhat\b/i.test(line) ||
-      /\bwhen\b/i.test(line) ||
-      /\bhow\b/i.test(line) ||
-      /\bselect\b/i.test(line) ||
-      /\bcorrect\b/i.test(line) ||
-      /\brepresents?\b/i.test(line) ||
-      /\bcalled\b/i.test(line) ||
-      /\bformula\b/i.test(line) ||
-      /\bcompound\b/i.test(line) ||
-      /\bion\b/i.test(line) ||
-      /\bname\b/i.test(line) ||
-      /\bproperties\b/i.test(line) ||
-      /\bcharacteristic\b/i.test(line)
-    );
-  }
-
-  function normalizeQuestionBlock(block) {
-    if (!block || block.length === 0) return block;
-
-    const firstLine = block[0];
-    const rest = block
-      .slice(1)
-      .flatMap(line => splitMixedChoiceLine(line))
-      .map(normalizeLine)
-      .filter(Boolean);
-
-    const choiceMap = {};
-    const unlabeledLines = [];
-
-    for (const line of rest) {
-      const choice = normalizeChoiceLabel(line);
-
-      if (choice) {
-        const cleanedChoiceLine = `${choice.label}. ${choice.text}${choice.isCorrect ? " ***" : ""}`;
-
-        if (!choiceMap[choice.label]) {
-          choiceMap[choice.label] = cleanedChoiceLine;
-        }
-
-        continue;
-      }
-
-      unlabeledLines.push(line);
-    }
-
-    const labelsFound = Object.keys(choiceMap);
-
-    if (labelsFound.length === 4) {
-      return [
-        firstLine,
-        ...unlabeledLines,
-        ...REQUIRED_LABELS.map(label => choiceMap[label])
-      ];
-    }
-
-    if (labelsFound.length > 0 && labelsFound.length < 4) {
-      const missingLabels = REQUIRED_LABELS.filter(label => !choiceMap[label]);
-      const fallbackChoices = unlabeledLines.slice(-missingLabels.length);
-      const possiblePromptLines = unlabeledLines.slice(0, unlabeledLines.length - fallbackChoices.length);
-
-      missingLabels.forEach((label, i) => {
-        if (fallbackChoices[i]) {
-          choiceMap[label] = `${label}. ${fallbackChoices[i]}`;
-        }
-      });
-
-      return [
-        firstLine,
-        ...possiblePromptLines,
-        ...REQUIRED_LABELS
-          .filter(label => choiceMap[label])
-          .map(label => choiceMap[label])
-      ];
-    }
-
-    return [firstLine, ...rest];
-  }
-
-  function parseQuestionBlock(block, foundIssues) {
-    const firstLine = block[0];
-    const qMatch = firstLine.match(/^\s*(\d+)\.\s*(.*)$/);
-
-    if (!qMatch) {
-      foundIssues.push("A question block was found but did not start correctly.");
-      return null;
-    }
-
-    const sourceNumber = qMatch[1];
-    const promptLines = [qMatch[2].trim()];
-    const choices = {};
-    let answer = null;
-    let readingChoices = false;
-
-    for (let i = 1; i < block.length; i++) {
-      const line = normalizeLine(block[i]);
-
-      if (!line || isNoiseLine(line)) continue;
-
-      if (isChoiceLine(line)) {
-        readingChoices = true;
-
-        const choice = normalizeChoiceLabel(line);
-
-        if (!choice) {
-          foundIssues.push(`Question ${sourceNumber}: malformed answer choice.`);
-          continue;
-        }
-
-        if (choices[choice.label]) {
-          foundIssues.push(`Question ${sourceNumber}: duplicate choice ${choice.label}.`);
-          continue;
-        }
-
-        choices[choice.label] = choice.text;
-
-        if (choice.isCorrect) {
-          if (answer && answer !== choice.label) {
-            foundIssues.push(`Question ${sourceNumber}: multiple correct answers detected.`);
-          }
-
-          answer = choice.label;
-        }
-
-        continue;
-      }
-
-      if (isAnswerLine(line)) {
-        const extracted = extractAnswerFromLine(line);
-
-        if (!extracted) {
-          foundIssues.push(`Question ${sourceNumber}: ANSWER line exists but no valid A-D answer found.`);
-        } else {
-          if (answer && answer !== extracted) {
-            foundIssues.push(`Question ${sourceNumber}: answer marker conflicts with ANSWER line.`);
-          }
-
-          answer = extracted;
-        }
-
-        continue;
-      }
-
-      if (!readingChoices) {
-        const remaining = block
-          .slice(i)
-          .map(normalizeLine)
-          .filter(l => l && !isNoiseLine(l));
-
-        if (remaining.length >= 4) {
-          const group = remaining.slice(0, 4);
-
-          const looksLikeChoices = group.every(item =>
-            !isQuestionStart(item) &&
-            !isChoiceLine(item) &&
-            !isAnswerLine(item) &&
-            item.length < 60
-          );
-
-          if (looksLikeChoices) {
-            REQUIRED_LABELS.forEach((label, choiceIndex) => {
-              choices[label] = group[choiceIndex].replace(/\*{2,3}/g, "").trim();
-            });
-
-            const correctIndex = group.findIndex(item => /\*{2,3}/.test(item));
-            if (correctIndex >= 0) {
-              answer = REQUIRED_LABELS[correctIndex];
+            if (/\*{2,3}/.test(choiceText)) {
+              extractedAnswer = label;
+              choiceText = choiceText.replace(/\*{2,3}/g, "").trim();
             }
 
-            readingChoices = true;
-            i += 3;
-            continue;
-          }
+            extractedChoices[label] = choiceText;
+          });
+
+          promptLines = promptLines.slice(0, promptLines.length - 4);
         }
 
-        promptLines.push(line);
-      }
-    }
+        return {
+          sourceNumber: qData.sourceNumber,
+          prompt: promptLines.join(" ").trim(),
+          choices: extractedChoices,
+          answer: extractedAnswer
+        };
+      })
+      .filter(Boolean);
 
-    return {
-      sourceNumber,
-      prompt: promptLines.join(" ").trim(),
-      choices,
-      answer,
-      valid: false
-    };
-  }
+    const seen = new Set();
 
-  function validateQuestion(question, foundIssues) {
-    if (!question) return false;
+    const validQuestions = parsedQuestions.filter(q => {
+      if (seen.has(q.sourceNumber)) return false;
+      seen.add(q.sourceNumber);
 
-    let valid = true;
+      const hasPrompt = q.prompt.length > 5;
+      const hasAllChoices = REQUIRED_LABELS.every(label => q.choices[label]);
 
-    if (!question.sourceNumber) valid = false;
-    if (!question.prompt || question.prompt.length < 3) valid = false;
-
-    if (Object.keys(question.choices).length === 0) {
-      return false;
-    }
-
-    for (const label of REQUIRED_LABELS) {
-      if (!question.choices[label] || question.choices[label].trim().length === 0) {
-        foundIssues.push(`Question ${question.sourceNumber}: missing choice ${label}.`);
-        valid = false;
-      }
-    }
-
-    if (!question.answer) {
-      foundIssues.push(`Question ${question.sourceNumber}: no correct answer detected (allowed in Quiz mode).`);
-      question.answer = null;
-    }
-
-    if (question.answer && !REQUIRED_LABELS.includes(question.answer)) {
-      foundIssues.push(`Question ${question.sourceNumber}: answer must be A, B, C, or D.`);
-      valid = false;
-    }
-
-    return valid;
-  }
-
-  function validateAllQuestions(parsedQuestions, foundIssues) {
-    const seenSourceNumbers = new Set();
-
-    return parsedQuestions.map(question => {
-      const copy = { ...question };
-
-      if (seenSourceNumbers.has(copy.sourceNumber)) {
-        copy.valid = false;
-        return copy;
+      if (!hasPrompt) {
+        foundIssues.push(`Question ${q.sourceNumber}: Missing prompt text.`);
       }
 
-      seenSourceNumbers.add(copy.sourceNumber);
-      copy.valid = validateQuestion(copy, foundIssues);
+      if (!hasAllChoices) {
+        foundIssues.push(`Question ${q.sourceNumber}: Missing one or more choices (A-D).`);
+      }
 
-      return copy;
+      if (hasPrompt && hasAllChoices && !q.answer) {
+        foundIssues.push(`Question ${q.sourceNumber}: no correct answer detected (allowed in Quiz mode).`);
+        q.answer = null;
+      }
+
+      return hasPrompt && hasAllChoices;
     });
-  }
 
-  function safeDisplayQuestions(validQuestions) {
-    return validQuestions.map(question => ({
+    const safeQuestions = validQuestions.map(question => ({
       sourceNumber: question.sourceNumber,
       prompt: question.prompt,
       choices: {
@@ -457,99 +294,16 @@ function App() {
       },
       answer: question.answer
     }));
-  }
 
-  function parse() {
-    const foundIssues = [];
-    const cleaned = cleanText(text);
-
-    setMode(null);
-    setSelectedAnswers({});
-    setReteachInput("");
-    setReteachMessage("");
-
-    if (!cleaned) {
-      setQuestions([]);
-      setIssues(["No text was provided. Paste text or upload a DOCX file first."]);
-      setBlocked(true);
-      setIndex(0);
-      return;
-    }
-
-    const rawLines = cleaned.split("\n");
-
-    const lines = rawLines
-      .flatMap(line => splitMixedChoiceLine(line))
-      .map(normalizeLine)
-      .filter(line => line.length > 0)
-      .filter(line => !isNoiseLine(line));
-
-    const blocks = [];
-    let currentBlock = [];
-    let autoNumber = 1;
-
-    for (const line of lines) {
-      if (isQuestionStart(line)) {
-        if (currentBlock.length > 0) blocks.push(currentBlock);
-
-        currentBlock = [line];
-
-        const numberMatch = line.match(/^\s*(\d+)\./);
-        if (numberMatch) {
-          autoNumber = Math.max(autoNumber, Number(numberMatch[1]) + 1);
-        }
-      } else if (looksLikeUnnumberedQuestion(line)) {
-        if (currentBlock.length > 0) blocks.push(currentBlock);
-
-        currentBlock = [`${autoNumber}. ${line}`];
-        autoNumber++;
-      } else if (currentBlock.length > 0) {
-        currentBlock.push(line);
-      } else if (blocks.length === 0 && line.length > 10) {
-        currentBlock = [`${autoNumber}. ${line}`];
-        autoNumber++;
-      }
-    }
-
-    if (currentBlock.length > 0) blocks.push(currentBlock);
-
-    if (blocks.length === 0) {
-      setQuestions([]);
-      setIssues(["No valid numbered questions were found. Questions must begin like: 1. Question text"]);
-      setBlocked(true);
-      setIndex(0);
-      return;
-    }
-
-    const parsed = blocks
-      .map(block => normalizeQuestionBlock(block))
-      .map(block => parseQuestionBlock(block, foundIssues))
-      .filter(Boolean);
-
-    const validated = validateAllQuestions(parsed, foundIssues);
-    const validQuestions = validated.filter(question => question.valid);
-
-    if (validQuestions.length === 0) {
-      setQuestions([]);
-      setIssues([
-        ...foundIssues,
-        "No questions were allowed into Quiz/Tutor because none passed validation."
-      ]);
-      setBlocked(true);
-      setIndex(0);
-      return;
-    }
-
-    const invalidCount = validated.length - validQuestions.length;
-
-    if (invalidCount > 0) {
-      foundIssues.push(`${invalidCount} question(s) were skipped because they did not meet LearnFlow formatting rules.`);
-    }
-
-    setQuestions(shuffleArray(safeDisplayQuestions(validQuestions)));
-    setIssues(foundIssues);
-    setBlocked(invalidCount > 0);
+    setQuestions(shuffleArray(safeQuestions));
+    setIssues(
+      foundIssues.length > 0
+        ? foundIssues
+        : ["Parsing successful. 4-choice blocks validated."]
+    );
     setIndex(0);
+
+    console.log("Phase One Result:", safeQuestions);
   }
 
   function startMode(selectedMode) {
@@ -581,6 +335,7 @@ function App() {
 
   function selectAnswer(label) {
     const currentQuestion = questions[index];
+
     if (!currentQuestion) return;
 
     setSelectedAnswers(prev => ({
@@ -616,7 +371,7 @@ function App() {
     React.createElement(
       "p",
       { className: "mb-4 text-gray-700" },
-      "Upload a DOCX file or paste text below. Review the extracted text before analyzing."
+      "Upload a DOCX file or paste text below. Phase One checks whether the material can be parsed into clean multiple-choice questions."
     ),
 
     React.createElement("input", {
@@ -631,7 +386,7 @@ function App() {
       rows: 12,
       value: text,
       onChange: e => setText(e.target.value),
-      placeholder: "1. Question text\nA. choice\nB. choice\nC. choice\nD. correct choice**"
+      placeholder: "1. Question text\nA. choice\nB. choice\nC. choice\nD. correct choice***"
     }),
 
     React.createElement(
@@ -647,19 +402,12 @@ function App() {
       React.createElement(
         "div",
         { className: "mt-4 border border-yellow-400 bg-yellow-50 p-3 rounded" },
-        React.createElement("h2", { className: "font-bold mb-2" }, "Formatting / Validation Report"),
+        React.createElement("h2", { className: "font-bold mb-2" }, "Phase One Parse Report"),
         React.createElement(
           "ul",
           { className: "list-disc ml-6" },
           issues.map((issue, i) => React.createElement("li", { key: i }, issue))
         )
-      ),
-
-    blocked &&
-      React.createElement(
-        "div",
-        { className: "mt-4 border border-red-400 bg-red-50 p-3 rounded text-red-800" },
-        "Some items were skipped or blocked to protect LearnFlow rules."
       ),
 
     questions.length > 0 &&
@@ -673,7 +421,7 @@ function App() {
         React.createElement(
           "p",
           { className: "text-gray-600 mb-4" },
-          `${questions.length} valid question(s) are ready.`
+          `${questions.length} valid multiple-choice question(s) are ready.`
         ),
 
         React.createElement(
