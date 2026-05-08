@@ -129,11 +129,7 @@ function App() {
     const isCorrect = /\*{2,3}/.test(text);
     text = text.replace(/\*{2,3}/g, "").trim();
 
-    return {
-      label,
-      text,
-      isCorrect
-    };
+    return { label, text, isCorrect };
   }
 
   function isAnswerLine(line) {
@@ -200,9 +196,7 @@ function App() {
 
     const parsedQuestions = blocks
       .map(block => {
-        const firstLine = block.lines[0];
-        const qData = getQuestionStart(firstLine);
-
+        const qData = getQuestionStart(block.lines[0]);
         if (!qData) return null;
 
         let promptLines = [];
@@ -276,7 +270,7 @@ function App() {
       }
 
       if (hasPrompt && hasAllChoices && !q.answer) {
-        foundIssues.push(`Question ${q.sourceNumber}: no correct answer detected (allowed in Quiz mode).`);
+        foundIssues.push(`Question ${q.sourceNumber}: Missing answer key.`);
         q.answer = null;
       }
 
@@ -295,15 +289,15 @@ function App() {
       answer: question.answer
     }));
 
-    setQuestions(shuffleArray(safeQuestions));
+    setQuestions(safeQuestions);
     setIssues(
       foundIssues.length > 0
         ? foundIssues
-        : ["Parsing successful. 4-choice blocks validated."]
+        : [`Success: ${safeQuestions.length} questions parsed and validated.`]
     );
     setIndex(0);
 
-    console.log("Phase One Result:", safeQuestions);
+    console.log("Phase One + Phase Two A Result:", safeQuestions);
   }
 
   function startMode(selectedMode) {
@@ -312,6 +306,18 @@ function App() {
     setSelectedAnswers({});
     setReteachInput("");
     setReteachMessage("");
+
+    if (selectedMode === "Quiz" || selectedMode === "Tutor") {
+      setQuestions(prev => shuffleArray(prev));
+    }
+  }
+
+  function backToModes() {
+    setMode(null);
+    setSelectedAnswers({});
+    setReteachInput("");
+    setReteachMessage("");
+    setIndex(0);
   }
 
   function startReteach() {
@@ -335,13 +341,25 @@ function App() {
 
   function selectAnswer(label) {
     const currentQuestion = questions[index];
-
     if (!currentQuestion) return;
 
     setSelectedAnswers(prev => ({
       ...prev,
       [currentQuestion.sourceNumber]: label
     }));
+  }
+
+  function setAnswerKey(label) {
+    const updated = questions.map((question, questionIndex) => {
+      if (questionIndex !== index) return question;
+
+      return {
+        ...question,
+        answer: label
+      };
+    });
+
+    setQuestions(updated);
   }
 
   function nextQuestion() {
@@ -352,57 +370,55 @@ function App() {
     setIndex(i => Math.max(i - 1, 0));
   }
 
-  function backToModes() {
-    setMode(null);
-    setSelectedAnswers({});
-    setReteachInput("");
-    setReteachMessage("");
-    setIndex(0);
-  }
-
   const currentQuestion = questions[index];
 
   return React.createElement(
     "div",
-    { className: "p-6 max-w-4xl mx-auto font-sans" },
+    { className: "p-6 max-w-5xl mx-auto font-sans" },
 
     React.createElement("h1", { className: "text-3xl font-bold mb-2" }, "LearnFlow"),
 
     React.createElement(
       "p",
       { className: "mb-4 text-gray-700" },
-      "Upload a DOCX file or paste text below. Phase One checks whether the material can be parsed into clean multiple-choice questions."
+      "Upload a DOCX file or paste text below. Phase One parses the material. Phase Two A lets you review missing answer keys."
     ),
 
-    React.createElement("input", {
-      type: "file",
-      accept: ".docx",
-      className: "mb-4 block border rounded p-2",
-      onChange: handleFileUpload
-    }),
+    questions.length === 0 &&
+      React.createElement(
+        "div",
+        null,
 
-    React.createElement("textarea", {
-      className: "w-full border rounded p-3 mb-4",
-      rows: 12,
-      value: text,
-      onChange: e => setText(e.target.value),
-      placeholder: "1. Question text\nA. choice\nB. choice\nC. choice\nD. correct choice***"
-    }),
+        React.createElement("input", {
+          type: "file",
+          accept: ".docx",
+          className: "mb-4 block border rounded p-2",
+          onChange: handleFileUpload
+        }),
 
-    React.createElement(
-      "button",
-      {
-        className: "bg-blue-600 text-white px-4 py-2 rounded",
-        onClick: parse
-      },
-      "Analyze Material"
-    ),
+        React.createElement("textarea", {
+          className: "w-full border rounded p-3 mb-4",
+          rows: 12,
+          value: text,
+          onChange: e => setText(e.target.value),
+          placeholder: "1. Question text\nA. choice\nB. choice\nC. choice\nD. correct choice***"
+        }),
+
+        React.createElement(
+          "button",
+          {
+            className: "bg-blue-600 text-white px-4 py-2 rounded",
+            onClick: parse
+          },
+          "Analyze Material"
+        )
+      ),
 
     issues.length > 0 &&
       React.createElement(
         "div",
         { className: "mt-4 border border-yellow-400 bg-yellow-50 p-3 rounded" },
-        React.createElement("h2", { className: "font-bold mb-2" }, "Phase One Parse Report"),
+        React.createElement("h2", { className: "font-bold mb-2" }, "Parse / Review Report"),
         React.createElement(
           "ul",
           { className: "list-disc ml-6" },
@@ -414,14 +430,92 @@ function App() {
       !mode &&
       React.createElement(
         "div",
-        { className: "mt-6 border rounded p-5 bg-white shadow" },
-
-        React.createElement("h2", { className: "text-xl font-bold mb-2" }, "Choose a Mode"),
+        { className: "mt-6 space-y-6" },
 
         React.createElement(
-          "p",
-          { className: "text-gray-600 mb-4" },
-          `${questions.length} valid multiple-choice question(s) are ready.`
+          "div",
+          { className: "flex justify-between items-end border-b pb-2" },
+          React.createElement(
+            "div",
+            null,
+            React.createElement("h2", { className: "text-xl font-bold text-blue-800" }, "Answer Key Review"),
+            React.createElement(
+              "p",
+              { className: "text-gray-600 text-sm" },
+              `${questions.length} valid multiple-choice question(s) parsed. Set missing answer keys before student use.`
+            )
+          ),
+          React.createElement(
+            "button",
+            {
+              className: "text-sm text-red-600 hover:underline",
+              onClick: resetSession
+            },
+            "Clear & Restart"
+          )
+        ),
+
+        React.createElement(
+          "div",
+          { className: "border rounded-lg overflow-hidden bg-white shadow-sm" },
+          React.createElement(
+            "table",
+            { className: "w-full text-left text-sm border-collapse" },
+            React.createElement(
+              "thead",
+              { className: "bg-gray-100 border-b" },
+              React.createElement(
+                "tr",
+                null,
+                React.createElement("th", { className: "p-3 w-16" }, "Q#"),
+                React.createElement("th", { className: "p-3" }, "Prompt"),
+                React.createElement("th", { className: "p-3 w-36" }, "Answer Key"),
+                React.createElement("th", { className: "p-3 w-24 text-right" }, "Action")
+              )
+            ),
+            React.createElement(
+              "tbody",
+              null,
+              questions.map((q, i) =>
+                React.createElement(
+                  "tr",
+                  { key: i, className: "border-b last:border-0 hover:bg-blue-50" },
+                  React.createElement("td", { className: "p-3 font-bold text-gray-500" }, q.sourceNumber),
+                  React.createElement("td", { className: "p-3 truncate max-w-xs" }, q.prompt),
+                  React.createElement(
+                    "td",
+                    { className: "p-3" },
+                    q.answer
+                      ? React.createElement(
+                          "span",
+                          { className: "bg-green-100 text-green-700 px-2 py-1 rounded font-bold" },
+                          `KEY: ${q.answer}`
+                        )
+                      : React.createElement(
+                          "span",
+                          { className: "bg-yellow-100 text-yellow-700 px-2 py-1 rounded font-bold" },
+                          "MISSING"
+                        )
+                  ),
+                  React.createElement(
+                    "td",
+                    { className: "p-3 text-right" },
+                    React.createElement(
+                      "button",
+                      {
+                        className: "text-blue-600 font-bold hover:underline",
+                        onClick: () => {
+                          setIndex(i);
+                          setMode("Editor");
+                        }
+                      },
+                      "Review"
+                    )
+                  )
+                )
+              )
+            )
+          )
         ),
 
         React.createElement(
@@ -496,25 +590,27 @@ function App() {
       currentQuestion &&
       React.createElement(
         "div",
-        { className: "mt-6 border rounded p-4 bg-white shadow" },
+        { className: "mt-6 border rounded-xl p-6 bg-white shadow" },
 
         React.createElement(
           "div",
-          { className: "mb-3 flex justify-between items-center text-sm text-gray-600" },
+          { className: "mb-4 flex justify-between items-center" },
           React.createElement(
             "span",
-            null,
-            mode === "Reteach"
+            { className: "font-bold text-blue-700" },
+            mode === "Editor"
+              ? `Editor: Source Question ${currentQuestion.sourceNumber}`
+              : mode === "Reteach"
               ? `Reteach: Source Question ${currentQuestion.sourceNumber}`
               : `${mode} Mode — Question ${index + 1} of ${questions.length}`
           ),
           React.createElement(
             "button",
             {
-              className: "text-blue-600 underline",
+              className: "text-gray-500 underline",
               onClick: backToModes
             },
-            "Change Mode"
+            "Back to Review"
           )
         ),
 
@@ -526,30 +622,47 @@ function App() {
 
         React.createElement(
           "div",
-          { className: "space-y-2" },
+          { className: "space-y-2 mb-6" },
           REQUIRED_LABELS.map(label => {
-            const isSelected =
-              selectedAnswers[currentQuestion.sourceNumber] === label;
+            const isSelected = selectedAnswers[currentQuestion.sourceNumber] === label;
+            const isAnswerKey = currentQuestion.answer === label;
 
             return React.createElement(
               "button",
               {
                 key: label,
-                className: isSelected
-                  ? "w-full text-left border rounded p-2 bg-blue-100 border-blue-500"
-                  : "w-full text-left border rounded p-2 bg-white hover:bg-gray-100",
-                onClick: () => selectAnswer(label)
+                className:
+                  mode === "Editor" && isAnswerKey
+                    ? "w-full text-left border rounded p-3 bg-green-100 border-green-500 font-bold"
+                    : isSelected
+                    ? "w-full text-left border rounded p-3 bg-blue-100 border-blue-500 font-bold"
+                    : "w-full text-left border rounded p-3 bg-white hover:bg-gray-100",
+                onClick: () => {
+                  if (mode === "Editor") {
+                    setAnswerKey(label);
+                  } else {
+                    selectAnswer(label);
+                  }
+                }
               },
-              `${label}. ${currentQuestion.choices[label]}`
+              `${label}. ${currentQuestion.choices[label]}${
+                mode === "Editor" && isAnswerKey ? "  ✓ KEY" : ""
+              }`
             );
           })
         ),
 
+        mode === "Editor" &&
+          React.createElement(
+            "div",
+            { className: "mb-4 text-sm text-gray-600" },
+            "Click the correct answer choice to set or change the answer key."
+          ),
+
         mode !== "Reteach" &&
           React.createElement(
             "div",
-            { className: "mt-4 flex gap-2" },
-
+            { className: "flex gap-2" },
             React.createElement(
               "button",
               {
@@ -559,11 +672,10 @@ function App() {
               },
               "Previous"
             ),
-
             React.createElement(
               "button",
               {
-                className: "bg-green-600 text-white px-4 py-2 rounded disabled:opacity-50",
+                className: "bg-blue-600 text-white px-4 py-2 rounded disabled:opacity-50",
                 onClick: nextQuestion,
                 disabled: index === questions.length - 1
               },
