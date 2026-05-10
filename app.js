@@ -41,13 +41,22 @@ function App() {
     return l.replace(/\s+/g, " ").trim();
   }
 
+  function verticalizeChoices(v) {
+  return v
+    // Break columns like: a. ...    c. ...
+    .replace(/(\s{2,}|\t)+(?=[A-Ea-e][.)]+\s*)/g, "\n")
+
+    // Break inline choices like: A. red B. blue
+    .replace(/\s+(?=[B-Eb-e][.)]+\s*)/g, "\n");
+}
+
   function isQuestionStart(line) {
     // FIXED: no uppercase requirement
     return /^\d+[.)]\s+/.test(line);
   }
 
   function parseChoiceLine(line) {
-    const m = line.match(/^\s*([A-E])[\.)]?\s*(.*)$/i);
+   const m = line.match(/^\s*([A-E])[\.)]+\s*(.*)$/i);
     if (!m) return null;
 
     let text = m[2];
@@ -132,14 +141,14 @@ function App() {
   // ===============================
   // PARSER
   // ===============================
-  function parse() {
-    const cleaned = cleanText(text);
-    const { cleanedText, answerKey } = extractAnswerKey(cleaned);
+ function parse() {
+  const cleaned = cleanText(text);
+  const { cleanedText, answerKey } = extractAnswerKey(cleaned);
 
-    const lines = cleanedText
-      .split("\n")
-      .map(normalizeLine)
-      .filter(l => l);
+  const lines = verticalizeChoices(cleanedText)
+    .split("\n")
+    .map(normalizeLine)
+    .filter(l => l);
 
     const rawBlocks = [];
     let current = null;
