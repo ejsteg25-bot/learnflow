@@ -146,8 +146,9 @@ function App() {
   const cleaned = cleanText(text);
   const { cleanedText, answerKey } = extractAnswerKey(cleaned);
 
-  const lines = verticalizeChoices(cleanedText)
+ const lines = cleanedText
   .split("\n")
+  .flatMap(line => verticalizeChoices(line).split("\n"))
   .map(normalizeLine)
   .filter(l => l);
 
