@@ -43,12 +43,11 @@ function App() {
   
  function verticalizeChoices(v) {
   return v
-    // 1. Force break on "NaSO4B." (No space collision)
-    .replace(/([^\s])(?=[B-Eb-e][.)]+\s*)/g, "$1\n")
-    // 2. Force break on Tabs or large gaps
-    .replace(/(\s{2,}|\t)+(?=[A-Ea-e][.)]+\s*)/g, "\n")
-    // 3. Force break on standard inline spaces
-    .replace(/\s+(?=[A-Ea-e][.)]+\s*)/g, "\n");
+    // 1. Handle any combination of tabs/multiple spaces followed by ANY label (a-e or A-E)
+    .replace(/(\s{2,}|\t+)(?=[a-eA-E][.)]\s*)/g, "\n")
+    
+    // 2. Handle the "Glued" case (No space at all)
+    .replace(/([^\s])(?=[b-eB-E][.)]\s*)/g, "$1\n");
 }
 
   function isQuestionStart(line) {
