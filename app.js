@@ -51,13 +51,6 @@ function App() {
     .replace(/\s+(?=[A-Ea-e][.)]+\s*)/g, "\n");
 }
 
-// Inside parse()
-const lines = cleanedText
-  .split("\n")
-  .flatMap(line => verticalizeChoices(line).split("\n"))
-  .map(normalizeLine)
-  .filter(l => l);}
-  
   function isQuestionStart(line) {
     // FIXED: no uppercase requirement
     return /^\d+[.)]\s+/.test(line);
