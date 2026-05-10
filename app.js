@@ -37,6 +37,10 @@ function App() {
       .trim();
   }
 
+  function normalizeLine(l) {
+  return l.replace(/\s+/g, " ").trim();
+}
+  
   function verticalizeChoices(v) {
   return v
     // Force a break when B-E label is smashed onto previous text
