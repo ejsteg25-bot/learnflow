@@ -47,7 +47,7 @@ function App() {
   }
 
   function parseChoiceLine(line) {
-    const m = line.match(/^\s*([A-E])[\.)]\s*(.*)$/i);
+    const m = line.match(/^\s*([A-E])[\.)]+?\s*(.*)$/i);
     if (!m) return null;
 
     let text = m[2];
