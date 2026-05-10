@@ -58,16 +58,16 @@ function App() {
   }
 
   function parseChoiceLine(line) {
-   const m = line.match(/^\s*([A-E])[\.)]+\s*(.*)$/i);
-    if (!m) return null;
-
-    let text = m[2];
-    const isCorrect = /\*{2,3}/.test(text);
-
-    text = text.replace(/\*{2,3}/g, "").trim();
-
-    return { label: m[1].toUpperCase(), text, isCorrect };
+  // Matches A or a, followed by . or ), followed by any amount of space
+  const match = line.match(/^([a-eA-E])[.)]\s*(.*)/);
+  if (match) {
+    return {
+      label: match[1].toUpperCase(), // Normalize to Uppercase for the UI
+      text: match[2].trim()
+    };
   }
+  return null;
+}
 
   function parseAnswerLine(line) {
     const m = line.match(/answer.*?\b([A-E])\b/i);
