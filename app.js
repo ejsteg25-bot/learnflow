@@ -43,11 +43,11 @@ function App() {
 
   function verticalizeChoices(v) {
   return v
-    // Break columns like: a. ...    c. ...
-    .replace(/(\s{2,}|\t)+(?=[A-Ea-e][.)]+\s*)/g, "\n")
+    // Fix A. ...B. ... (NO SPACE case)
+    .replace(/([A-Ea-e][.)]+\s*[^A-Ea-e]+)(?=[A-Ea-e][.)]+\s*)/g, "$1\n")
 
-    // Break inline choices like: A. red B. blue
-    .replace(/\s+(?=[B-Eb-e][.)]+\s*)/g, "\n");
+    // Fix multi-column spacing
+    .replace(/(\s{2,}|\t)+(?=[A-Ea-e][.)]+\s*)/g, "\n");
 }
 
   function isQuestionStart(line) {
