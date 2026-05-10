@@ -41,16 +41,14 @@ function App() {
   return l.replace(/\s+/g, " ").trim();
 }
   
-  function verticalizeChoices(v) {
+ function verticalizeChoices(v) {
   return v
-    // Force a break when B-E label is smashed onto previous text
-    .replace(/([^\s])(?=[B-Eb-e][.)]+\s*)/g, "$1\n")
+    // FIX 1: Break content and labels smashed together (e.g., NaSO4B.)
+    // Captures the current content and forces a newline before the next detected label
+    .replace(/([A-Ea-e][.)]\s*[^A-Ea-e]+)(?=[A-Ea-e][.)]\s*)/g, "$1\n")
 
-    // Handle multi-column tabs / large spacing
-    .replace(/(\s{2,}|\t)+(?=[A-Ea-e][.)]+\s*)/g, "\n")
-
-    // Handle remaining inline spaced choices
-    .replace(/\s+(?=[A-Ea-e][.)]+\s*)/g, "\n");
+    // FIX 2: Break clean columns using tabs or double-spacing
+    .replace(/(\s{2,}|\t)+(?=[A-Ea-e][.)]\s*)/g, "\n");
 }
   
   function isQuestionStart(line) {
