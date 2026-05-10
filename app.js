@@ -147,17 +147,18 @@ function App() {
   const { cleanedText, answerKey } = extractAnswerKey(cleaned);
 
   const rawLines = cleanedText.split("\n");
-  console.log("RAW Q LINES:", rawLines);
 
-  const lines = rawLines
-    .flatMap(line => {
-      const v = verticalizeChoices(line);
-      console.log("BEFORE:", line);
-      console.log("AFTER:", v);
-      return v.split("\n");
-    })
-    .map(normalizeLine)
-    .filter(l => l);
+const lines = rawLines.flatMap(line => {
+    // Look for the problem child Q1
+    if (line.toLowerCase().includes("sodium sulfate") || line.toLowerCase().includes("naso4")) {
+        console.log("🎯 TARGET Q1 DETECTED");
+        console.log("BEFORE V-LOG:", JSON.stringify(line));
+        const v = verticalizeChoices(line);
+        console.log("AFTER V-LOG:", JSON.stringify(v));
+        return v.split("\n");
+    }
+    return verticalizeChoices(line).split("\n");
+}).map(normalizeLine).filter(l => l);
 
 console.log("FINAL LINES:", lines);
 
