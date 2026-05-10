@@ -146,11 +146,21 @@ function App() {
   const cleaned = cleanText(text);
   const { cleanedText, answerKey } = extractAnswerKey(cleaned);
 
- const lines = cleanedText
-  .split("\n")
-  .flatMap(line => verticalizeChoices(line).split("\n"))
+const rawLines = cleanedText.split("\n");
+
+console.log("RAW Q LINES:", rawLines);
+
+const lines = rawLines
+  .flatMap(line => {
+    const v = verticalizeChoices(line);
+    console.log("BEFORE:", line);
+    console.log("AFTER:", v);
+    return v.split("\n");
+  })
   .map(normalizeLine)
   .filter(l => l);
+
+console.log("FINAL LINES:", lines);
 
 console.log("LINES:", lines);
 
