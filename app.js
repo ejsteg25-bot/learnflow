@@ -147,9 +147,11 @@ function App() {
   const { cleanedText, answerKey } = extractAnswerKey(cleaned);
 
   const lines = verticalizeChoices(cleanedText)
-    .split("\n")
-    .map(normalizeLine)
-    .filter(l => l);
+  .split("\n")
+  .map(normalizeLine)
+  .filter(l => l);
+
+console.log("LINES:", lines);
 
     const rawBlocks = [];
     let current = null;
