@@ -44,10 +44,12 @@ function App() {
  function verticalizeChoices(v) {
   return v
     // 1. Handle any combination of tabs/multiple spaces followed by ANY label (a-e or A-E)
+    // The + after \t is key for those 4-tab blocks seen in the log
     .replace(/(\s{2,}|\t+)(?=[a-eA-E][.)]\s*)/g, "\n")
     
-    // 2. Handle the "Glued" case (No space at all)
-    .replace(/([^\s])(?=[b-eB-E][.)]\s*)/g, "$1\n");
+    // 2. Handle the "Glued" case (No space at all, e.g., NaSO4b. or NaSO4B.)
+    // Changed [b-eB-E] to [a-eA-E] to be safe and added the 'a' range
+    .replace(/([^\s])(?=[a-eA-E][.)]\s*)/g, "$1\n");
 }
 
   function isQuestionStart(line) {
