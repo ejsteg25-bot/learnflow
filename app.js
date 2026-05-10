@@ -46,9 +46,13 @@ function App() {
     // Break compressed choices like A. NaSO4B. Na2SO4
     .replace(/([^\s])(?=[B-Eb-e][.)]+\s*)/g, "$1\n")
 
-    // Break tabbed / multi-column choices
-    .replace(/(\s{2,}|\t)+(?=[A-Ea-e][.)]+\s*)/g, "\n");
+    // Break multi-column (tabs or 2+ spaces)
+    .replace(/(\s{2,}|\t)+(?=[A-Ea-e][.)]+\s*)/g, "\n")
+
+    // Break inline spaced choices (A. ... b. ...)
+    .replace(/\s+(?=[A-Ea-e][.)]+\s*)/g, "\n");
 }
+  
   function isQuestionStart(line) {
     // FIXED: no uppercase requirement
     return /^\d+[.)]\s+/.test(line);
