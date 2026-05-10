@@ -37,19 +37,15 @@ function App() {
       .trim();
   }
 
-  function normalizeLine(l) {
-    return l.replace(/\s+/g, " ").trim();
-  }
-
   function verticalizeChoices(v) {
   return v
-    // Break compressed choices like A. NaSO4B. Na2SO4
+    // Force a break when B-E label is smashed onto previous text
     .replace(/([^\s])(?=[B-Eb-e][.)]+\s*)/g, "$1\n")
 
-    // Break multi-column (tabs or 2+ spaces)
+    // Handle multi-column tabs / large spacing
     .replace(/(\s{2,}|\t)+(?=[A-Ea-e][.)]+\s*)/g, "\n")
 
-    // Break inline spaced choices (A. ... b. ...)
+    // Handle remaining inline spaced choices
     .replace(/\s+(?=[A-Ea-e][.)]+\s*)/g, "\n");
 }
   
