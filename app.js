@@ -183,14 +183,31 @@ function App() {
       });
 
       // 🔥 KEY FIX: LAST 4 LINES FALLBACK
-      if (Object.keys(choices).length === 0 && promptLines.length >= 5) {
-        const lastFour = promptLines.slice(-4);
-        promptLines = promptLines.slice(0, -4);
+     if (Object.keys(choices).length === 0) {
+  const contentOnly = block
+    .slice(1)
+    .map(l => l.trim())
+    .filter(l =>
+      l.length > 0 &&
+      !/^answer/i.test(l) &&
+      !/^[A-E][\.)]/i.test(l)
+    );
 
-        lastFour.forEach((line, i) => {
-          choices[REQUIRED_LABELS[i]] = line;
-        });
-      }
+  const likelyChoices = contentOnly.filter(l => l.length < 50);
+
+  if (likelyChoices.length >= 4) {
+    const lastFour = likelyChoices.slice(-4);
+
+    lastFour.forEach((line, i) => {
+      choices[REQUIRED_LABELS[i]] = line;
+    });
+
+    promptLines = [
+      block[0].replace(/^\d+[.)]\s*/, ""),
+      ...likelyChoices.slice(0, -4)
+    ];
+  }
+}
 
       const finalAnswer = answer || answerKey[num] || null;
 
