@@ -43,13 +43,20 @@ function App() {
   
  function verticalizeChoices(v) {
   return v
-    // FIX 1: Break content and labels smashed together (e.g., NaSO4B.)
-    // Captures the current content and forces a newline before the next detected label
-    .replace(/([A-Ea-e][.)]\s*[^A-Ea-e]+)(?=[A-Ea-e][.)]\s*)/g, "$1\n")
-
-    // FIX 2: Break clean columns using tabs or double-spacing
-    .replace(/(\s{2,}|\t)+(?=[A-Ea-e][.)]\s*)/g, "\n");
+    // 1. Force break on "NaSO4B." (No space collision)
+    .replace(/([^\s])(?=[B-Eb-e][.)]+\s*)/g, "$1\n")
+    // 2. Force break on Tabs or large gaps
+    .replace(/(\s{2,}|\t)+(?=[A-Ea-e][.)]+\s*)/g, "\n")
+    // 3. Force break on standard inline spaces
+    .replace(/\s+(?=[A-Ea-e][.)]+\s*)/g, "\n");
 }
+
+// Inside parse()
+const lines = cleanedText
+  .split("\n")
+  .flatMap(line => verticalizeChoices(line).split("\n"))
+  .map(normalizeLine)
+  .filter(l => l);}
   
   function isQuestionStart(line) {
     // FIXED: no uppercase requirement
