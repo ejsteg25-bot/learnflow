@@ -1,11 +1,16 @@
 /**
  * LearnFlow Phase 2B.1: Hardened Source Block Pipeline
- * VERSION: 0.3.3-STABLE
+ * VERSION: 0.3.4-STABLE
+ * Changes:
+ * - Fixes active variable stability in render.
+ * - Maintains end-of-line answer detection for shorthand matching.
+ * - Supports A-E shorthand answers.
+ * - Preserves full source blocks for AI mirroring.
  */
 
 const { useState } = React;
 
-const APP_VERSION = "VERSION: SOURCE BLOCK PIPELINE v0.3.3-STABLE";
+const APP_VERSION = "VERSION: SOURCE BLOCK PIPELINE v0.3.4-STABLE";
 
 function App() {
   const [text, setText] = useState("");
@@ -14,15 +19,12 @@ function App() {
   const [mode, setMode] = useState(null);
   const [index, setIndex] = useState(0);
 
-  // ===============================
-  // 1. FILE INGESTION
-  // ===============================
   async function handleFileUpload(e) {
     const file = e.target.files[0];
     if (!file) return;
 
     if (typeof mammoth === "undefined") {
-      alert("Mammoth.js not loaded.");
+      alert("Mammoth.js not detected.");
       return;
     }
 
@@ -32,118 +34,137 @@ function App() {
       setText(result.value || "");
     } catch (err) {
       console.error("File processing error:", err);
-      alert("Error reading .docx file.");
+      alert("Failed to parse .docx file.");
     }
   }
 
-  // ===============================
-  // 2. UTILITIES
-  // ===============================
-  const normalize = (l) => String(l || "").replace(/\s+/g, " ").trim();
+  const normalizeLine = (l) => String(l || "").replace(/\s+/g, " ").trim();
 
-  const isNoise = (line) => {
-    const lower = normalize(line).toLowerCase();
-    return (
-      lower.includes("scantron") ||
-      lower.includes("class set") ||
-      lower.includes("do not write") ||
-      /^name\s*:/.test(lower) ||
-      /^date\s*:/.test(lower) ||
-      /^class\s*:/.test(lower)
-    );
-  };
+  function cleanText(value) {
+    return String(value || "")
+      .replace(/\r/g, "")
+      .replace(/[“”]/g, '"')
+      .replace(/[‘’]/g, "'")
+      .replace(/\u00a0/g, " ")
+      .trim();
+  }
+
+  function extractAnswerKeyAndCleanText(value) {
+    const lines = value.split("\n");
+    const kept = [];
+    const answerKey = {};
+    let inAnswerKey = false;
+
+    for (const line of lines) {
+      const clean = normalizeLine(line);
+      const lower = clean.toLowerCase();
+
+      if (
+        !inAnswerKey &&
+        (
+          lower === "answer key" ||
+          lower === "answers" ||
+          lower.startsWith("answer key:") ||
+          lower.startsWith("key:")
+        )
+      ) {
+        inAnswerKey = true;
+        continue;
+      }
+
+      if (inAnswerKey) {
+        const keyMatch = clean.match(/^(\d{1,3})[.)]?\s*[-: ]?\s*([A-Ea-e*]{1,3})\b/);
+        if (keyMatch) {
+          answerKey[keyMatch[1]] = keyMatch[2].replace(/\*/g, "").toUpperCase();
+        }
+        continue;
+      }
+
+      kept.push(line);
+    }
+
+    return { cleanedText: kept.join("\n"), answerKey };
+  }
 
   const isQuestionStart = (line) => /^\s*\d{1,3}[.)]\s+\S+/.test(line);
-  const getNumber = (line) => line.match(/^\s*(\d{1,3})[.)]/)?.[1] || "?";
-  const stripNumber = (line) => line.replace(/^\s*\d{1,3}[.)]\s*/, "");
 
-  // ===============================
-  // 3. ANSWER KEY STRIPPER
-  // ===============================
-  function extractAnswerKey(text) {
-    const lines = text.split("\n");
-    const clean = [];
-    const key = {};
-    let inKey = false;
+  const getQuestionNumber = (line) =>
+    String(line || "").match(/^\s*(\d{1,3})[.)]\s+/)?.[1] || "?";
 
-    for (let line of lines) {
-      const l = normalize(line).toLowerCase();
-      if (!inKey && (l.includes("answer key") || l === "answers" || l.startsWith("key:"))) {
-        inKey = true;
-        continue;
-      }
-      if (inKey) {
-        const m = line.match(/^(\d+).*?([A-E])\b/i);
-        if (m) key[m[1]] = m[2].toUpperCase();
-        continue;
-      }
-      clean.push(line);
-    }
-    return { cleaned: clean.join("\n"), answerKey: key };
+  const removeQuestionNumber = (line) =>
+    String(line || "").replace(/^\s*\d{1,3}[.)]\s+/, "").trim();
+
+  function detectChoiceEvidence(rawText) {
+    const matches = [...rawText.matchAll(/[A-Ea-e][.)]+\s*/g)];
+    const gluedChoiceLikely = /[A-Za-z0-9%)](?=[B-Eb-e][.)]\s*)/.test(rawText);
+    return { count: matches.length, gluedChoiceLikely };
   }
 
-  // ===============================
-  // 4. DETECTION ENGINE
-  // ===============================
-  function detectChoices(raw) {
-    const matches = [...raw.matchAll(/[A-Ea-e][.)]+\s*/g)];
-    const glued = /[A-Za-z0-9)](?=[B-Eb-e][.)])/.test(raw);
-    return { count: matches.length, glued };
+  function detectEndLineAnswer(rawText) {
+    const clean = normalizeLine(rawText);
+    const match = clean.match(/^\d{1,3}[.)]\s+(.+?)\s+([A-Ea-e])$/);
+
+    if (!match) return null;
+
+    const stem = match[1].trim();
+    const answer = match[2].toUpperCase();
+
+    return stem.length >= 2 ? { stem, answer } : null;
   }
 
-  function detectAnswer(raw, external) {
-    if (external) return external;
-    const answerLine = raw.match(/answer\s*[:\-]?\s*([A-E])\b/i);
+  function detectAnswerHint(rawText, externalAnswer) {
+    if (externalAnswer) return externalAnswer;
+
+    const answerLine = rawText.match(/answer\s*[:\-]?\s*([A-Ea-e])\b/i);
     if (answerLine) return answerLine[1].toUpperCase();
-    const star = raw.match(/\b([A-Ea-e])[.)]?[^\n]*\*{2,3}/);
-    if (star) return star[1].toUpperCase();
-    return null;
+
+    const starMatch = rawText.match(/\b([A-Ea-e])[\.)]?[^\n]*\*{2,3}/);
+    if (starMatch) return starMatch[1].toUpperCase();
+
+    const endLine = detectEndLineAnswer(rawText);
+    return endLine ? endLine.answer : null;
   }
 
-  function detectType(raw, choiceCount) {
-    const lower = raw.toLowerCase();
-    if (/graph|figure|diagram|chart|image|insert graphic|look at the/i.test(raw)) return "VISUAL_REQUIRED";
-    if (/\bselect\s+(two|three|all|multiple)\b/i.test(lower)) return "MULTI_SELECT";
+  function detectType(rawText, choiceCount) {
+    const lower = rawText.toLowerCase();
+
+    if (detectEndLineAnswer(rawText) && choiceCount === 0) return "MATCHING";
+    if (/graph|figure|diagram|chart|image|look at|insert graphic/i.test(rawText)) return "VISUAL_REQUIRED";
+    if (/\bselect\s+(two|three|four|all|multiple)\b/i.test(lower)) return "MULTI_SELECT";
     if (/drag|move|token|blank|_{3,}/i.test(lower)) return "INTERACTIVE";
     if (/matching|column a|column b/i.test(lower)) return "MATCHING";
-    if (/write|explain|essay|draw|free response|short answer/i.test(lower)) return "FREE_RESPONSE";
+    if (/free response|write|explain|essay|draw/i.test(lower)) return "FREE_RESPONSE";
+
     return choiceCount === 0 ? "FREE_RESPONSE" : "MULTIPLE_CHOICE";
   }
 
-  function buildPrompt(lines) {
-    const first = stripNumber(lines[0]);
+  function buildPromptGuess(lines) {
+    const first = removeQuestionNumber(lines[0] || "");
     const extra = [];
-    for (let l of lines.slice(1)) {
-      const clean = normalize(l);
-      if (!clean || /^[A-Ea-e][.)]/.test(clean) || /^answer/i.test(clean)) break;
+
+    for (const line of lines.slice(1)) {
+      const clean = normalizeLine(line);
+
+      if (!clean) continue;
+      if (/^[A-Ea-e][.)]+/.test(clean)) break;
+      if (/^answer\s*:?/i.test(clean)) break;
+
       extra.push(clean);
-      if (extra.length >= 3) break;
+      if (extra.length >= 2) break;
     }
+
     return [first, ...extra].join(" ").trim();
   }
 
-  function confidenceLogic(prompt, type, choiceCount, answer, raw, glued) {
-    if (!prompt || prompt.length < 10) return "LOW";
-    if (type !== "MULTIPLE_CHOICE") return prompt.length > 20 ? "HIGH" : "MEDIUM";
-    if (choiceCount >= 4 && answer) return "HIGH";
-    if (choiceCount >= 3 && !glued) return "HIGH";
-    if (glued || (choiceCount > 0 && choiceCount < 3)) return "MEDIUM";
-    return "LOW";
-  }
-
-  function statusLogic(type, confidence, duplicate) {
-    if (duplicate) return "DUPLICATE";
-    if (type === "VISUAL_REQUIRED") return "NEEDS_GRAPHIC";
-    if (confidence === "LOW") return "NEEDS_TEACHER_REVIEW";
-    return "READY_TO_MIRROR";
-  }
-
-  // ===============================
-  // 5. MAIN PIPELINE
-  // ===============================
   function harvest() {
-    const base = extractAnswerKey(text);
-    const rawLines = base.cleaned.split("\n").map(l => l.trim()).filter(l => l);
+    const cleaned = cleanText(text);
+    const { cleanedText, answerKey } = extractAnswerKeyAndCleanText(cleaned);
+
+    const rawLines = cleanedText
+      .split("\n")
+      .map(l => l.trim())
+      .filter(l => l);
+
     const groups = [];
     let current = null;
 
@@ -155,111 +176,222 @@ function App() {
         current.push(line);
       }
     });
+
     if (current) groups.push(current);
 
-    const seen = new Set();
-    const result = groups.map(lines => {
-      const raw = lines.join("\n");
-      const num = getNumber(lines[0]);
-      const duplicate = seen.has(num);
-      seen.add(num);
+    const seenNumbers = new Set();
 
-      const choices = detectChoices(raw);
-      const answer = detectAnswer(raw, base.answerKey[num]);
-      const type = detectType(raw, choices.count);
-      const prompt = buildPrompt(lines);
-      const confidence = confidenceLogic(prompt, type, choices.count, answer, raw, choices.glued);
-      const status = statusLogic(type, confidence, duplicate);
-      const cleaned = lines.filter(l => !isNoise(l)).join("\n");
+    const processed = groups.map(lines => {
+      const rawText = lines.join("\n");
+      const num = getQuestionNumber(lines[0]);
+      const duplicate = seenNumbers.has(num);
+      seenNumbers.add(num);
+
+      const evidence = detectChoiceEvidence(rawText);
+      const type = detectType(rawText, evidence.count);
+      const promptGuess = buildPromptGuess(lines);
+      const answerHint = detectAnswerHint(rawText, answerKey[num]);
+
+      let confidence = "HIGH";
+
+      if (!promptGuess || promptGuess.length < 3) {
+        confidence = "LOW";
+      } else if (type === "VISUAL_REQUIRED") {
+        confidence = "MEDIUM";
+      } else if (type === "MATCHING" && answerHint) {
+        confidence = "HIGH";
+      } else if (
+        evidence.gluedChoiceLikely ||
+        (type === "MULTIPLE_CHOICE" && evidence.count < 3)
+      ) {
+        confidence = "MEDIUM";
+      }
+
+      const status = duplicate
+        ? "DUPLICATE"
+        : type === "VISUAL_REQUIRED"
+          ? "NEEDS_GRAPHIC"
+          : confidence === "LOW"
+            ? "NEEDS_TEACHER_REVIEW"
+            : "READY_TO_MIRROR";
 
       return {
         sourceNumber: num,
         detectedType: type,
         confidence,
         status,
-        prompt,
-        rawText: raw,
-        cleanedSource: cleaned,
-        answerHint: answer,
+        promptGuess,
+        rawText,
+        answerHint,
         mirrorPayload: {
+          intent: "Mirror assessment item",
           topicHint: globalTopic,
-          source: cleaned,
-          type,
-          answerHint: answer,
-          metadata: { originalNumber: num, confidence, choiceCount: choices.count }
+          source: rawText,
+          originalNumber: num,
+          answerHint
         }
       };
     });
 
-    setBlocks(result);
+    setBlocks(processed);
+    setIndex(0);
     setMode("Dashboard");
   }
 
-  // ===============================
-  // 6. UI RENDER
-  // ===============================
-  const activeBlock = blocks[index];
+  const active = blocks[index];
 
-  return React.createElement("div", { style: { padding: "30px", maxWidth: "1200px", margin: "auto", fontFamily: "system-ui, sans-serif", color: "#2d3436" } },
-    React.createElement("header", { style: { borderBottom: "3px solid #0984e3", paddingBottom: "10px", marginBottom: "30px" } },
-      React.createElement("h1", { style: { margin: 0, color: "#0984e3" } }, "LearnFlow"),
-      React.createElement("span", { style: { fontSize: "0.85rem", color: "#636e72", fontWeight: "bold" } }, APP_VERSION)
-    ),
+  return React.createElement(
+    "div",
+    {
+      style: {
+        padding: "40px",
+        fontFamily: "sans-serif",
+        maxWidth: "1000px",
+        margin: "auto"
+      }
+    },
 
-    !mode && React.createElement("div", null,
-      React.createElement("div", { style: { marginBottom: "25px", background: "#f1f2f6", padding: "20px", borderRadius: "8px" } },
-        React.createElement("label", { style: { display: "block", fontWeight: "bold", marginBottom: "10px" } }, "Course / Unit Context:"),
-        React.createElement("input", {
-          value: globalTopic,
-          onChange: e => setGlobalTopic(e.target.value),
-          placeholder: "e.g., Unit 4: Chemical Bonding",
-          style: { width: "100%", maxWidth: "400px", padding: "10px", borderRadius: "4px", border: "1px solid #dfe6e9" }
-        })
-      ),
-      React.createElement("input", { type: "file", onChange: handleFileUpload, style: { marginBottom: "20px" } }),
+    React.createElement("h1", { style: { color: "#007bff" } }, "LearnFlow Pipeline"),
+    React.createElement("p", { style: { fontSize: "0.8rem", color: "#888" } }, APP_VERSION),
+
+    !mode && React.createElement(
+      "div",
+      null,
+      React.createElement("input", {
+        value: globalTopic,
+        onChange: e => setGlobalTopic(e.target.value),
+        style: {
+          width: "100%",
+          padding: "10px",
+          marginBottom: "10px"
+        }
+      }),
+      React.createElement("input", {
+        type: "file",
+        onChange: handleFileUpload,
+        style: {
+          marginBottom: "10px",
+          display: "block"
+        }
+      }),
       React.createElement("textarea", {
         value: text,
         onChange: e => setText(e.target.value),
-        placeholder: "Paste test content here...",
-        style: { width: "100%", height: "350px", padding: "15px", fontSize: "14px", fontFamily: "monospace", borderRadius: "8px", border: "1px solid #dfe6e9" }
+        style: {
+          width: "100%",
+          height: "300px",
+          padding: "10px"
+        },
+        placeholder: "Paste content here..."
       }),
-      React.createElement("button", { onClick: harvest, style: { marginTop: "20px", padding: "12px 30px", background: "#0984e3", color: "white", border: "none", cursor: "pointer", borderRadius: "6px", fontSize: "1rem", fontWeight: "bold" } }, "Analyze Document")
+      React.createElement("button", {
+        onClick: harvest,
+        style: {
+          marginTop: "10px",
+          padding: "10px 20px",
+          background: "#007bff",
+          color: "white",
+          border: "none",
+          cursor: "pointer"
+        }
+      }, "Harvest Source")
     ),
 
-    mode === "Dashboard" && React.createElement("div", null,
-      React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "25px" } },
-        React.createElement("h2", null, `Extracted Items: ${blocks.length}`),
-        React.createElement("button", { onClick: () => setMode(null), style: { padding: "8px 15px", background: "none", border: "1px solid #d63031", color: "#d63031", borderRadius: "4px", cursor: "pointer" } }, "Clear & Restart")
-      ),
-      React.createElement("div", { style: { display: "grid", gap: "12px" } },
-        blocks.map((b, i) =>
-          React.createElement("div", { key: i, style: { padding: "15px", border: "1px solid #dfe6e9", borderRadius: "8px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "white" } },
-            React.createElement("div", null,
-              React.createElement("b", { style: { fontSize: "1.1rem" } }, `Q${b.sourceNumber}`),
-              React.createElement("span", { style: { margin: "0 10px", color: "#b2bec3" } }, "|"),
-              React.createElement("span", { style: { background: "#f1f2f6", padding: "2px 8px", borderRadius: "4px", fontSize: "0.85rem" } }, b.detectedType),
-              React.createElement("span", { style: { marginLeft: "15px", fontWeight: "bold", color: b.status === "READY_TO_MIRROR" ? "#27ae60" : "#e67e22" } }, b.status)
-            ),
-            React.createElement("button", { onClick: () => { setIndex(i); setMode("Editor"); }, style: { padding: "6px 12px", background: "#0984e3", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" } }, "Inspect")
+    mode === "Dashboard" && React.createElement(
+      "div",
+      null,
+      React.createElement("button", { onClick: () => setMode(null) }, "Back"),
+      React.createElement(
+        "table",
+        {
+          style: {
+            width: "100%",
+            marginTop: "20px",
+            borderCollapse: "collapse"
+          }
+        },
+        React.createElement(
+          "tbody",
+          null,
+          blocks.map((b, i) =>
+            React.createElement(
+              "tr",
+              {
+                key: i,
+                style: {
+                  borderBottom: "1px solid #ddd"
+                }
+              },
+              React.createElement("td", { style: { padding: "8px" } }, b.sourceNumber),
+              React.createElement("td", { style: { padding: "8px" } }, b.detectedType),
+              React.createElement(
+                "td",
+                {
+                  style: {
+                    padding: "8px",
+                    color: b.status === "READY_TO_MIRROR" ? "green" : "orange"
+                  }
+                },
+                b.status
+              ),
+              React.createElement(
+                "td",
+                null,
+                React.createElement("button", {
+                  onClick: () => {
+                    setIndex(i);
+                    setMode("Review");
+                  }
+                }, "Review")
+              )
+            )
           )
         )
       )
     ),
 
-    mode === "Editor" && activeBlock && React.createElement("div", null,
-      React.createElement("button", { onClick: () => setMode("Dashboard"), style: { marginBottom: "25px", padding: "8px 15px", background: "#636e72", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" } }, "← Back to Dashboard"),
-      React.createElement("div", { style: { display: "flex", gap: "30px" } },
-        React.createElement("div", { style: { flex: 1 } },
-          React.createElement("h3", null, "Cleaned Source"),
-          React.createElement("pre", { style: { whiteSpace: "pre-wrap", background: "#f8f9fa", padding: "20px", border: "1px solid #dfe6e9", borderRadius: "8px", fontSize: "0.95rem", minHeight: "200px" } }, activeBlock.cleanedSource)
+    mode === "Review" && active && React.createElement(
+      "div",
+      null,
+      React.createElement("button", { onClick: () => setMode("Dashboard") }, "Dashboard"),
+      React.createElement(
+        "div",
+        {
+          style: {
+            display: "flex",
+            gap: "20px",
+            marginTop: "20px"
+          }
+        },
+        React.createElement(
+          "pre",
+          {
+            style: {
+              flex: 1,
+              background: "#f8f9fa",
+              padding: "15px",
+              whiteSpace: "pre-wrap"
+            }
+          },
+          active.rawText
         ),
-        React.createElement("div", { style: { flex: 1 } },
-          React.createElement("h3", null, "Mirror Instruction Payload"),
-          React.createElement("pre", { style: { whiteSpace: "pre-wrap", background: "#f1f9ff", padding: "20px", border: "1px solid #0984e3", borderRadius: "8px", fontSize: "0.9rem", color: "#0984e3" } }, JSON.stringify(activeBlock.mirrorPayload, null, 2))
+        React.createElement(
+          "pre",
+          {
+            style: {
+              flex: 1,
+              background: "#eef",
+              padding: "15px",
+              whiteSpace: "pre-wrap"
+            }
+          },
+          JSON.stringify(active.mirrorPayload, null, 2)
         )
       )
     )
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+ReactDOM.createRoot(document.getElementById("root")).render(
+  React.createElement(App)
+);
