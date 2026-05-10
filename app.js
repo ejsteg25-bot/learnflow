@@ -43,14 +43,12 @@ function App() {
   
  function verticalizeChoices(v) {
   return v
-    // 1. Force newline BEFORE any label (B-E) that follows a non-space character
-    .replace(/([^\s])(?=[B-Eb-e][.)]+\s*)/g, "$1\n")
-    
-    // 2. Force newline for tabs or large spacing (Q8 / Q13)
-    .replace(/(\s{2,}|\t)+(?=[A-Ea-e][.)]+\s*)/g, "\n")
-    
-    // 3. Force newline for inline spaces (A. ... B. ...)
-    .replace(/\s+(?=[A-Ea-e][.)]+\s*)/g, "\n");
+    // FIX 1: Break content and labels smashed together (e.g., NaSO4B.)
+    // Captures the current content and forces a newline before the next detected label
+    .replace(/([A-Ea-e][.)]\s*[^A-Ea-e]+)(?=[A-Ea-e][.)]\s*)/g, "$1\n")
+
+    // FIX 2: Break clean columns using tabs or double-spacing
+    .replace(/(\s{2,}|\t)+(?=[A-Ea-e][.)]\s*)/g, "\n");
 }
   
   function isQuestionStart(line) {
