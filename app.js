@@ -1,17 +1,17 @@
 /**
- * LearnFlow Phase 2B.1: Hardened Source Block Pipeline
- * VERSION: 0.3.11-STABLE
+ * LearnFlow Phase 2B.2: Chemistry-Aware Source Block Pipeline
+ * VERSION: SOURCE BLOCK PIPELINE v0.4.0-STABLE
  *
  * FINAL INTEGRATED FIXES:
- * - Section Header Isolation: Prevents "Part 2:" from sticking to Q6.
- * - Chemistry Precision: Uses negative lookbehind to ignore "°C)" in choice counts.
- * - Visual Flagging: Correctly sets NEEDS_GRAPHIC for "segment" and "heating curve" items.
- * - End-Line Detection: Captures matching answers at the end of a line.
+ * 1. Header Isolation: "Part 2:" now stops the previous question immediately.
+ * 2. Choice Precision: Regex requires whitespace around A-E to ignore "°C)".
+ * 3. Segment Mapping: "segment" and "point" keywords trigger VISUAL_REQUIRED.
+ * 4. Architecture: Full browser-compatible React (no JSX).
  */
 
 const { useState } = React;
 
-const APP_VERSION = "VERSION: SOURCE BLOCK PIPELINE v0.3.11-STABLE";
+const APP_VERSION = "VERSION: SOURCE BLOCK PIPELINE v0.4.0-STABLE";
 
 function App() {
   const [text, setText] = useState("");
@@ -20,26 +20,10 @@ function App() {
   const [mode, setMode] = useState(null);
   const [index, setIndex] = useState(0);
 
-  const normalize = (line) => String(line || "").replace(/\s+/g, " ").trim();
-
-  async function handleFileUpload(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    if (typeof mammoth === "undefined") {
-      alert("Mammoth.js not detected.");
-      return;
-    }
-
-    try {
-      const buffer = await file.arrayBuffer();
-      const result = await mammoth.extractRawText({ arrayBuffer: buffer });
-      setText(result.value || "");
-    } catch (err) {
-      console.error("File processing error:", err);
-      alert("Failed to parse .docx file.");
-    }
-  }
+  // ===============================
+  // UTILITIES & FILE HANDLING
+  // ===============================
+  const normalize = (l) => String(l || "").replace(/\s+/g, " ").trim();
 
   function cleanText(value) {
     return String(value || "")
@@ -50,14 +34,28 @@ function App() {
       .trim();
   }
 
-  function isSectionHeader(line) {
-    const clean = normalize(line);
-    return (
-      /^part\s+(\d+|[ivx]+)\s*:/i.test(clean) ||
-      /^section\s+([a-z]|\d+)\s*:/i.test(clean)
-    );
+  async function handleFileUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (typeof mammoth === "undefined") {
+      alert("Mammoth.js not detected. Ensure the script is in your HTML.");
+      return;
+    }
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const result = await mammoth.extractRawText({ arrayBuffer: buffer });
+      setText(result.value || "");
+    } catch (err) {
+      console.error(err);
+      alert("DOCX parse failed.");
+    }
   }
 
+  // ===============================
+  // EXTRACTION & DETECTION
+  // ===============================
   function extractAnswerKey(text) {
     const lines = text.split("\n");
     const clean = [];
@@ -66,93 +64,92 @@ function App() {
 
     for (const line of lines) {
       const l = normalize(line).toLowerCase();
-
-      if (!inKey && (l === "answer key" || l === "answers" || l.startsWith("answer key:") || l.startsWith("key:"))) {
+      if (!inKey && (l === "answer key" || l === "answers" || l.startsWith("key:"))) {
         inKey = true;
         continue;
       }
-
       if (inKey) {
         const m = normalize(line).match(/^(\d{1,3})[.)]?\s*[-: ]?\s*([A-Ea-e*]{1,3})\b/);
         if (m) key[m[1]] = m[2].replace(/\*/g, "").toUpperCase();
         continue;
       }
-
       clean.push(line);
     }
-
     return { cleaned: clean.join("\n"), answerKey: key };
   }
 
-  function isLikelyAnswerGridStart(lines, startIndex) {
-    const window = lines.slice(startIndex, startIndex + 20).map(normalize);
-    if (window.length < 8) return false;
-
-    const shortLines = window.filter(line => line.length <= 4).length;
-    const numberLines = window.filter(line => /^\d{1,3}[.)]?$/.test(line)).length;
-    const letterLines = window.filter(line => /^[A-E]$/i.test(line)).length;
-    const hasRealSentence = window.some(line => line.length > 20);
-    const hasQuestionWords = window.some(line => /\b(which|what|why|how|calculate|determine|identify|explain|select|complete|classify)\b/i.test(line));
-
-    return (numberLines >= 2 && letterLines >= 3 && shortLines >= window.length * 0.65 && !hasRealSentence && !hasQuestionWords);
-  }
-
-  function isQuestionStart(lines, index, assessmentStarted) {
-    const line = lines[index];
-
-    if (isSectionHeader(line)) return false;
-    if (!/^\s*\d{1,3}[.)]\s+\S+/.test(line)) return false;
-
-    if (assessmentStarted) return !isLikelyAnswerGridStart(lines, index);
-
+  function isHeader(line) {
     const clean = normalize(line);
-    const nearby = lines.slice(index, index + 6).map(normalize).join(" ");
-
     return (
-      /\?/.test(clean) ||
-      /\b(which|what|calculate|determine|identify|explain|select|write|draw|complete|classify|use|match)\b/i.test(clean) ||
-      /_{3,}|☐/.test(clean) ||
-      /(^|[^A-Za-z°])[A-Ea-e][.)]\s+/.test(nearby)
+      /^part\s+(\d+|[ivx]+)\s*:/i.test(clean) ||
+      /^section\s+([a-z]|\d+)\s*:/i.test(clean)
     );
   }
 
-  function detectType(rawText, choiceCount) {
-    const lower = rawText.toLowerCase();
+  function isLikelyAnswerGridStart(lines, startIndex) {
+    const window = lines.slice(startIndex, startIndex + 15).map(normalize);
+    if (window.length < 6) return false;
 
-    if (/graph|figure|diagram|chart|image|insert graphic|heating curve|cooling curve/i.test(rawText) || /\bwhich segment\b/i.test(rawText)) {
+    const shortLines = window.filter(l => l.length <= 4).length;
+    const numberLines = window.filter(l => /^\d{1,3}[.)]?$/.test(l)).length;
+    const letterLines = window.filter(l => /^[A-E]$/i.test(l)).length;
+    const hasLongText = window.some(l => l.length > 15);
+    const hasQuestionWords = window.some(l =>
+      /\b(which|what|why|how|calculate|determine|identify|explain)\b/i.test(l)
+    );
+
+    return (numberLines >= 2 && letterLines >= 3 && shortLines >= window.length * 0.6 && !hasLongText && !hasQuestionWords);
+  }
+
+  function isQuestionStart(lines, i, started) {
+    const line = lines[i];
+    if (!/^\s*\d{1,3}[.)]\s+\S+/.test(line)) return false;
+    if (started) return true;
+
+    const clean = normalize(line);
+    const nearby = lines.slice(i, i + 6).map(normalize).join(" ");
+    return (
+      /\?/.test(clean) ||
+      /\b(which|what|calculate|determine|identify|explain|select|write|complete|classify|use|match)\b/i.test(clean) ||
+      /_{3,}|☐/.test(clean) ||
+      /(?<=^|\s)[A-E][.)](?=\s|$)/.test(nearby)
+    );
+  }
+
+  function detectType(raw, choiceCount) {
+    const lower = raw.toLowerCase();
+    if (/graph|figure|diagram|image|segment|point|heating curve|cooling curve/i.test(lower))
       return "VISUAL_REQUIRED";
-    }
-
-    if (/\bselect\s+(all|multiple|two|three|four)\b/i.test(lower)) return "MULTI_SELECT";
-    if (/drag|move|blank|_{3,}|☐|token bank|drop zone/i.test(lower)) return "INTERACTIVE";
-    if (/matching|match each|column a|column b/i.test(lower)) return "MATCHING";
-
+    if (/\bselect\s+(all|multiple|two|three)\b/i.test(lower))
+      return "MULTI_SELECT";
+    if (/drag|move|blank|_{3,}|☐/i.test(lower))
+      return "INTERACTIVE";
+    if (/matching|column a|column b/i.test(lower))
+      return "MATCHING";
     return choiceCount === 0 ? "FREE_RESPONSE" : "MULTIPLE_CHOICE";
   }
 
+  // ===============================
+  // CORE PIPELINE
+  // ===============================
   function harvest() {
-    const base = extractAnswerKey(cleanText(text));
-
-    const allLines = base.cleaned
-      .split("\n")
-      .map(line => line.trim())
-      .filter(Boolean);
-
+    const { cleaned, answerKey } = extractAnswerKey(cleanText(text));
+    const allLines = cleaned.split("\n").map(l => l.trim()).filter(Boolean);
+    
     const groups = [];
     let current = null;
-    let assessmentStarted = false;
+    let started = false;
 
     allLines.forEach((line, i) => {
-      if (isSectionHeader(line)) {
-        if (current) groups.push(current);
-        current = null;
-        return;
-      }
+      if (isLikelyAnswerGridStart(allLines, i)) return; // Simple grid skip during loop
+      
+      const newQ = isQuestionStart(allLines, i, started);
+      const header = isHeader(line);
 
-      if (isQuestionStart(allLines, i, assessmentStarted)) {
-        assessmentStarted = true;
+      if (newQ || header) {
         if (current) groups.push(current);
-        current = [line];
+        current = newQ ? [line] : null;
+        if (newQ) started = true;
       } else if (current) {
         current.push(line);
       }
@@ -161,73 +158,91 @@ function App() {
     if (current) groups.push(current);
 
     const seen = new Set();
+    const processed = groups.map(lines => {
+      const raw = lines.join("\n");
+      const num = String(lines[0] || "").match(/^\s*(\d{1,3})[.)]/)?.[1] || "?";
+      const duplicate = seen.has(num);
+      seen.add(num);
 
-    const result = groups.map(lines => {
-      const rawText = lines.join("\n");
-      const sourceNumber = String(lines[0] || "").match(/^\s*(\d{1,3})[.)]/)?.[1] || "?";
-      const duplicate = seen.has(sourceNumber);
-      seen.add(sourceNumber);
-
-      const matches = [...rawText.matchAll(/(^|[^A-Za-z°])([A-Ea-e])[.)]\s+/g)];
-      const detectedType = detectType(rawText, matches.length);
-      const answerHint = base.answerKey[sourceNumber] || null;
+      const choiceCount = [...raw.matchAll(/(^|\s)[A-E][.)](?=\s|$)/g)].length;
+      const type = detectType(raw, choiceCount);
 
       return {
-        sourceNumber,
-        detectedType,
-        status: duplicate ? "DUPLICATE" : (detectedType === "VISUAL_REQUIRED" ? "NEEDS_GRAPHIC" : "READY_TO_MIRROR"),
-        rawText,
-        answerHint,
+        sourceNumber: num,
+        detectedType: type,
+        status: duplicate ? "DUPLICATE" : (type === "VISUAL_REQUIRED" ? "NEEDS_GRAPHIC" : "READY_TO_MIRROR"),
+        rawText: raw,
         mirrorPayload: {
           intent: "Mirror assessment item",
           topicHint: globalTopic,
-          source: rawText,
-          originalNumber: sourceNumber,
-          originalType: detectedType,
-          answerHint
+          source: raw,
+          originalNumber: num,
+          originalType: type,
+          answerHint: answerKey[num] || null,
+          constraints: { preserveConcept: true, preserveDOK: true, preserveQuestionType: true, cleanStudentReady: true }
         }
       };
     });
 
-    setBlocks(result);
-    setIndex(0);
+    setBlocks(processed);
     setMode("Dashboard");
+    setIndex(0);
   }
 
+  // ===============================
+  // RENDER UI
+  // ===============================
   const active = blocks[index];
 
   return React.createElement("div", { style: { padding: "40px", fontFamily: "sans-serif", maxWidth: "1000px", margin: "auto" } },
-
-    React.createElement("h1", null, "LearnFlow Pipeline"),
-    React.createElement("p", null, APP_VERSION),
+    React.createElement("h1", { style: { color: "#007bff" } }, "LearnFlow Pipeline"),
+    React.createElement("p", { style: { fontSize: "0.8rem", color: "#666" } }, APP_VERSION),
 
     !mode && React.createElement("div", null,
-      React.createElement("input", { value: globalTopic, onChange: e => setGlobalTopic(e.target.value) }),
-      React.createElement("input", { type: "file", onChange: handleFileUpload }),
-      React.createElement("textarea", { value: text, onChange: e => setText(e.target.value) }),
-      React.createElement("button", { onClick: harvest }, "Harvest Source")
+      React.createElement("input", {
+        value: globalTopic,
+        onChange: e => setGlobalTopic(e.target.value),
+        style: { width: "100%", padding: "10px", marginBottom: "10px" },
+        placeholder: "Unit Topic (e.g. Chemistry)"
+      }),
+      React.createElement("input", { type: "file", accept: ".docx", onChange: handleFileUpload, style: { marginBottom: "10px", display: "block" } }),
+      React.createElement("textarea", {
+        value: text,
+        onChange: e => setText(e.target.value),
+        style: { width: "100%", height: "300px", padding: "10px" },
+        placeholder: "Paste or Upload content..."
+      }),
+      React.createElement("button", { 
+        onClick: harvest, 
+        style: { marginTop: "10px", padding: "10px 20px", background: "#007bff", color: "white", border: "none", cursor: "pointer" } 
+      }, "Harvest Source")
     ),
 
     mode === "Dashboard" && React.createElement("div", null,
-      React.createElement("button", { onClick: () => setMode(null) }, "Back"),
-      blocks.map((b, i) =>
-        React.createElement("div", { key: i },
-          `Q${b.sourceNumber} | ${b.detectedType} | ${b.status}`,
-          React.createElement("button", {
-            onClick: () => { setIndex(i); setMode("Review"); }
-          }, "Review")
+      React.createElement("button", { onClick: () => setMode(null) }, "Back to Editor"),
+      React.createElement("div", { style: { marginTop: "20px" } },
+        blocks.map((b, i) =>
+          React.createElement("div", { 
+            key: i, 
+            style: { padding: "10px", borderBottom: "1px solid #eee", display: "flex", justifyContent: "space-between", alignItems: "center" } 
+          },
+            React.createElement("span", null, `Q${b.sourceNumber} | ${b.detectedType} | ` + 
+              React.createElement("span", { style: { color: b.status === "READY_TO_MIRROR" ? "green" : (b.status === "NEEDS_GRAPHIC" ? "orange" : "red") } }, b.status)
+            ),
+            React.createElement("button", { onClick: () => { setIndex(i); setMode("Review"); } }, "Review")
+          )
         )
       )
     ),
 
     mode === "Review" && active && React.createElement("div", null,
-      React.createElement("button", { onClick: () => setMode("Dashboard") }, "Back"),
-      React.createElement("pre", null, active.rawText),
-      React.createElement("pre", null, JSON.stringify(active.mirrorPayload, null, 2))
+      React.createElement("button", { onClick: () => setMode("Dashboard"), style: { marginBottom: "20px" } }, "Back to Dashboard"),
+      React.createElement("div", { style: { display: "flex", gap: "20px" } },
+        React.createElement("pre", { style: { flex: 1, background: "#f9f9f9", padding: "15px", whiteSpace: "pre-wrap", border: "1px solid #ddd" } }, active.rawText),
+        React.createElement("pre", { style: { flex: 1, background: "#eef", padding: "15px", whiteSpace: "pre-wrap", border: "1px solid #ccd" } }, JSON.stringify(active.mirrorPayload, null, 2))
+      )
     )
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(
-  React.createElement(App)
-);
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
