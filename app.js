@@ -43,13 +43,12 @@ function App() {
 
   function verticalizeChoices(v) {
   return v
-    // Fix A. ...B. ... (NO SPACE case)
-    .replace(/([A-Ea-e][.)]+\s*[^A-Ea-e]+)(?=[A-Ea-e][.)]+\s*)/g, "$1\n")
+    // Break compressed choices like A. NaSO4B. Na2SO4
+    .replace(/([^\s])(?=[B-Eb-e][.)]+\s*)/g, "$1\n")
 
-    // Fix multi-column spacing
+    // Break tabbed / multi-column choices
     .replace(/(\s{2,}|\t)+(?=[A-Ea-e][.)]+\s*)/g, "\n");
 }
-
   function isQuestionStart(line) {
     // FIXED: no uppercase requirement
     return /^\d+[.)]\s+/.test(line);
