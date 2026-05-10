@@ -1,16 +1,17 @@
 /**
  * LearnFlow Phase 2B.1: Hardened Source Block Pipeline
- * VERSION: 0.3.7-STABLE
+ * VERSION: 0.3.8-STABLE
  * Architecture: Browser-loaded React (No JSX)
- * Logic Updates:
- * - Conservative Lookahead: Differentiates between Section Headers and Questions.
- * - Assessment Gate: Once a question is confirmed, numbering is prioritized.
- * - Lossless Mirroring: Preserves raw text for Phase 3 mirroring.
+ * * Key Features:
+ * 1. Assessment Windowing: Trims instructional headers before "Part X:".
+ * 2. Scantron Killing: Identifies and truncates trailing answer grids.
+ * 3. Question-Start Lookahead: Distinguishes between sub-headers and actual items.
+ * 4. Rich mirrorPayload: Prepares deep metadata for Phase 3 mirroring.
  */
 
 const { useState } = React;
 
-const APP_VERSION = "VERSION: SOURCE BLOCK PIPELINE v0.3.7-STABLE";
+const APP_VERSION = "VERSION: SOURCE BLOCK PIPELINE v0.3.8-STABLE";
 
 function App() {
   const [text, setText] = useState("");
@@ -30,15 +31,15 @@ function App() {
       .trim();
   }
 
+  // --- FILE & UTILITY HELPERS ---
+
   async function handleFileUpload(e) {
     const file = e.target.files[0];
     if (!file) return;
-
     if (typeof mammoth === "undefined") {
       alert("Mammoth.js not detected.");
       return;
     }
-
     try {
       const buffer = await file.arrayBuffer();
       const result = await mammoth.extractRawText({ arrayBuffer: buffer });
@@ -58,106 +59,85 @@ function App() {
     for (const line of lines) {
       const clean = normalizeLine(line);
       const lower = clean.toLowerCase();
-
-      if (
-        !inAnswerKey &&
-        (
-          lower === "answer key" ||
-          lower === "answers" ||
-          lower.startsWith("answer key:") ||
-          lower.startsWith("key:")
-        )
-      ) {
+      if (!inAnswerKey && (lower === "answer key" || lower === "answers" || lower.startsWith("key:"))) {
         inAnswerKey = true;
         continue;
       }
-
       if (inAnswerKey) {
         const keyMatch = clean.match(/^(\d{1,3})[.)]?\s*[-: ]?\s*([A-Ea-e*]{1,3})\b/);
-        if (keyMatch) {
-          answerKey[keyMatch[1]] = keyMatch[2].replace(/\*/g, "").toUpperCase();
-        }
+        if (keyMatch) answerKey[keyMatch[1]] = keyMatch[2].replace(/\*/g, "").toUpperCase();
         continue;
       }
-
       kept.push(line);
     }
-
     return { cleanedText: kept.join("\n"), answerKey };
   }
 
-  function detectEndLineAnswer(rawText) {
-    const clean = normalizeLine(rawText);
-    const match = clean.match(/^\d{1,3}[.)]\s+(.+?)\s+([A-Ea-e])$/);
+  // --- WINDOWING & GRID REMOVAL ---
 
-    if (!match) return null;
-
-    const stem = match[1].trim();
-    const answer = match[2].toUpperCase();
-
-    return stem.length >= 2 ? { stem, answer } : null;
+  function trimBeforeAssessmentStart(lines) {
+    const partIndex = lines.findIndex(line => /^part\s+(\d+|[ivx]+)\s*:/i.test(normalizeLine(line)));
+    return partIndex >= 0 ? lines.slice(partIndex + 1) : lines;
   }
 
-  function isQuestionStart(lines, i, assessmentStarted) {
-    const line = lines[i];
+  function isLikelyAnswerGridStart(lines, startIndex) {
+    const window = lines.slice(startIndex, startIndex + 15).map(normalizeLine);
+    if (window.length < 5) return false;
 
-    if (!/^\s*\d{1,3}[.)]\s+\S+/.test(line)) return false;
-    if (assessmentStarted) return true;
-
-    const clean = normalizeLine(line);
-    const nearby = lines.slice(i, i + 6).map(normalizeLine).join(" ");
-
-    return (
-      /\?/.test(clean) ||
-      /\b(which|what|calculate|determine|identify|explain|select|write)\b/i.test(clean) ||
-      /_{3,}|☐/.test(clean) ||
-      /[A-Ea-e][.)]\s*/.test(nearby) ||
-      detectEndLineAnswer(line)
+    const firstFiveAreGridTokens = window.slice(0, 5).every(line =>
+      /^\d{1,3}[.)]?$/.test(line) || /^[A-E]$/i.test(line) || line === "" || line === ","
     );
+
+    const hasChoiceLetters = window.includes("A") && window.includes("B") && window.includes("C") && window.includes("D");
+    const hasQuestionWords = window.some(line => /\b(which|what|calculate|determine|explain|select|use|match|classify)\b/i.test(line));
+    const hasContentLine = window.some(line => line.length > 12);
+
+    return firstFiveAreGridTokens || (hasChoiceLetters && !hasQuestionWords && !hasContentLine);
   }
 
   function removeTrailingAnswerGrid(lines) {
     const cleaned = [];
-
     for (let i = 0; i < lines.length; i++) {
-      const window = lines.slice(i, i + 12).map(normalizeLine);
-      const isGrid =
-        /^\d{1,3}[.)]?$/.test(window[0] || "") &&
-        window.includes("A") &&
-        window.includes("B");
-
-      const hasNoWords = !window.some(l =>
-        /\b(which|what|how|why)\b/i.test(l)
-      );
-
-      if (isGrid && hasNoWords) break;
-
+      if (isLikelyAnswerGridStart(lines, i)) break;
       cleaned.push(lines[i]);
     }
-
     return cleaned;
+  }
+
+  // --- QUESTION DETECTION ---
+
+  function isQuestionStart(lines, i, assessmentStarted) {
+    const line = lines[i];
+    if (!/^\s*\d{1,3}[.)]\s+\S+/.test(line)) return false;
+    if (assessmentStarted) return !isLikelyAnswerGridStart(lines, i);
+
+    const clean = normalizeLine(line);
+    const nearby = lines.slice(i, i + 6).map(normalizeLine).join(" ");
+    return (
+      /\?/.test(clean) ||
+      /\b(which|what|calculate|determine|identify|explain|select|write|draw|complete|classify|use|match)\b/i.test(clean) ||
+      /_{3,}|☐/.test(clean) ||
+      /[A-Ea-e][.)]\s*/.test(nearby)
+    );
   }
 
   function detectType(rawText, choiceCount) {
     const lower = rawText.toLowerCase();
-
-    if (detectEndLineAnswer(rawText) && choiceCount === 0) return "MATCHING";
-    if (/graph|figure|diagram|image/i.test(rawText)) return "VISUAL_REQUIRED";
+    if (/graph|figure|diagram|chart|image/i.test(rawText)) return "VISUAL_REQUIRED";
     if (/\bselect\s+(all|multiple|two|three)\b/i.test(lower)) return "MULTI_SELECT";
-    if (/drag|move|blank|_{3,}/i.test(lower)) return "INTERACTIVE";
-
+    if (/drag|move|blank|_{3,}|☐/i.test(lower)) return "INTERACTIVE";
+    if (/matching|match each/i.test(lower)) return "MATCHING";
     return choiceCount === 0 ? "FREE_RESPONSE" : "MULTIPLE_CHOICE";
   }
 
+  // --- HARVESTER ---
+
   function harvest() {
     const { cleanedText, answerKey } = extractAnswerKeyAndCleanText(cleanText(text));
+    const allLines = cleanedText.split("\n").map(l => l.trim()).filter(l => l);
 
-    const allLines = cleanedText
-      .split("\n")
-      .map(l => l.trim())
-      .filter(l => l);
-
-    const rawLines = removeTrailingAnswerGrid(allLines);
+    const assessmentLines = trimBeforeAssessmentStart(allLines);
+    const rawLines = removeTrailingAnswerGrid(assessmentLines);
 
     const groups = [];
     let current = null;
@@ -166,18 +146,15 @@ function App() {
     rawLines.forEach((line, i) => {
       if (isQuestionStart(rawLines, i, assessmentStarted)) {
         assessmentStarted = true;
-
         if (current) groups.push(current);
         current = [line];
       } else if (current) {
         current.push(line);
       }
     });
-
     if (current) groups.push(current);
 
     const seenNumbers = new Set();
-
     const processed = groups.map(lines => {
       const rawText = lines.join("\n");
       const num = String(lines[0] || "").match(/^\s*(\d{1,3})[.)]/)?.[1] || "?";
@@ -190,184 +167,63 @@ function App() {
       return {
         sourceNumber: num,
         detectedType: type,
-        status: duplicate
-          ? "DUPLICATE"
-          : type === "VISUAL_REQUIRED"
-            ? "NEEDS_GRAPHIC"
-            : "READY_TO_MIRROR",
+        status: duplicate ? "DUPLICATE" : (type === "VISUAL_REQUIRED" ? "NEEDS_GRAPHIC" : "READY_TO_MIRROR"),
         rawText,
         mirrorPayload: {
           intent: "Mirror assessment item",
           topicHint: globalTopic,
           source: rawText,
           originalNumber: num,
-          answerHint: answerKey[num] || null
+          originalType: type,
+          answerHint: answerKey[num] || null,
+          constraints: { preserveConcept: true, preserveDOK: true, cleanStudentReady: true }
         }
       };
     });
 
     setBlocks(processed);
-    setIndex(0);
     setMode("Dashboard");
   }
 
+  // --- UI COMPONENTS ---
+
   const active = blocks[index];
 
-  return React.createElement(
-    "div",
-    {
-      style: {
-        padding: "40px",
-        fontFamily: "sans-serif",
-        maxWidth: "1000px",
-        margin: "auto"
-      }
-    },
-
+  return React.createElement("div", { style: { padding: "40px", fontFamily: "sans-serif", maxWidth: "1000px", margin: "auto" } },
     React.createElement("h1", { style: { color: "#007bff" } }, "LearnFlow Pipeline"),
     React.createElement("p", { style: { fontSize: "0.8rem", color: "#888" } }, APP_VERSION),
 
-    !mode && React.createElement(
-      "div",
-      null,
-      React.createElement("input", {
-        value: globalTopic,
-        onChange: e => setGlobalTopic(e.target.value),
-        style: {
-          width: "100%",
-          padding: "10px",
-          marginBottom: "10px"
-        },
-        placeholder: "Topic (e.g., Chemistry)"
-      }),
-      React.createElement("input", {
-        type: "file",
-        onChange: handleFileUpload,
-        style: {
-          marginBottom: "10px",
-          display: "block"
-        }
-      }),
-      React.createElement("textarea", {
-        value: text,
-        onChange: e => setText(e.target.value),
-        style: {
-          width: "100%",
-          height: "300px",
-          padding: "10px"
-        },
-        placeholder: "Paste text here..."
-      }),
-      React.createElement("button", {
-        onClick: harvest,
-        style: {
-          marginTop: "10px",
-          padding: "10px 20px",
-          background: "#007bff",
-          color: "white",
-          border: "none",
-          cursor: "pointer"
-        }
-      }, "Harvest Source")
+    !mode && React.createElement("div", null,
+      React.createElement("input", { value: globalTopic, onChange: e => setGlobalTopic(e.target.value), style: { width: "100%", padding: "10px", marginBottom: "10px" }, placeholder: "Chemistry" }),
+      React.createElement("input", { type: "file", onChange: handleFileUpload, style: { marginBottom: "10px", display: "block" } }),
+      React.createElement("textarea", { value: text, onChange: e => setText(e.target.value), style: { width: "100%", height: "300px", padding: "10px" }, placeholder: "Paste text..." }),
+      React.createElement("button", { onClick: harvest, style: { marginTop: "10px", padding: "10px 20px", background: "#007bff", color: "white", border: "none", cursor: "pointer" } }, "Harvest Source")
     ),
 
-    mode === "Dashboard" && React.createElement(
-      "div",
-      null,
+    mode === "Dashboard" && React.createElement("div", null,
       React.createElement("button", { onClick: () => setMode(null) }, "Back"),
-      React.createElement(
-        "table",
-        {
-          style: {
-            width: "100%",
-            marginTop: "20px",
-            borderCollapse: "collapse"
-          }
-        },
-        React.createElement(
-          "tbody",
-          null,
+      React.createElement("table", { style: { width: "100%", marginTop: "20px", borderCollapse: "collapse" } },
+        React.createElement("tbody", null,
           blocks.map((b, i) =>
-            React.createElement(
-              "tr",
-              {
-                key: i,
-                style: {
-                  borderBottom: "1px solid #ddd"
-                }
-              },
+            React.createElement("tr", { key: i, style: { borderBottom: "1px solid #ddd" } },
               React.createElement("td", { style: { padding: "8px" } }, b.sourceNumber),
               React.createElement("td", { style: { padding: "8px" } }, b.detectedType),
-              React.createElement(
-                "td",
-                {
-                  style: {
-                    padding: "8px",
-                    color: b.status === "READY_TO_MIRROR" ? "green" : "orange"
-                  }
-                },
-                b.status
-              ),
-              React.createElement(
-                "td",
-                null,
-                React.createElement("button", {
-                  onClick: () => {
-                    setIndex(i);
-                    setMode("Review");
-                  }
-                }, "Review")
-              )
+              React.createElement("td", { style: { padding: "8px", color: b.status === "READY_TO_MIRROR" ? "green" : b.status === "NEEDS_GRAPHIC" ? "orange" : "red" } }, b.status),
+              React.createElement("td", null, React.createElement("button", { onClick: () => { setIndex(i); setMode("Review"); } }, "Review"))
             )
           )
         )
       )
     ),
 
-    mode === "Review" && active && React.createElement(
-      "div",
-      null,
+    mode === "Review" && active && React.createElement("div", null,
       React.createElement("button", { onClick: () => setMode("Dashboard") }, "Dashboard"),
-      React.createElement(
-        "div",
-        {
-          style: {
-            display: "flex",
-            gap: "20px",
-            marginTop: "20px"
-          }
-        },
-        React.createElement(
-          "pre",
-          {
-            style: {
-              flex: 1,
-              background: "#f8f9fa",
-              padding: "15px",
-              whiteSpace: "pre-wrap",
-              border: "1px solid #ddd"
-            }
-          },
-          active.rawText
-        ),
-        React.createElement(
-          "pre",
-          {
-            style: {
-              flex: 1,
-              background: "#eef",
-              padding: "15px",
-              whiteSpace: "pre-wrap",
-              border: "1px solid #ccd"
-            }
-          },
-          JSON.stringify(active.mirrorPayload, null, 2)
-        )
+      React.createElement("div", { style: { display: "flex", gap: "20px", marginTop: "20px" } },
+        React.createElement("pre", { style: { flex: 1, background: "#f8f9fa", padding: "15px", whiteSpace: "pre-wrap", border: "1px solid #ddd" } }, active.rawText),
+        React.createElement("pre", { style: { flex: 1, background: "#eef", padding: "15px", whiteSpace: "pre-wrap", border: "1px solid #ccd" } }, JSON.stringify(active.mirrorPayload, null, 2))
       )
     )
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(
-  React.createElement(App)
-);
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
