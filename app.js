@@ -1,23 +1,22 @@
 /**
  * LearnFlow Phase 3: Single-Question AI Mirroring Layer
- * VERSION: SOURCE BLOCK PIPELINE v0.5.2-BETA
+ * VERSION: SOURCE BLOCK PIPELINE v0.5.3-BETA-DIAGNOSTIC
  *
  * STATUS:
- * - NEEDS VALIDATION against user-run output.
+ * - NEEDS VALIDATION.
  *
  * FIXES:
- * - Uses assessment-window trimming.
- * - Preserves Scantron/grid hard stop.
- * - Preserves header isolation.
- * - Restores DOCX upload.
- * - Preserves Source Block Pipeline.
- * - Adds automatic Mirror Prompt Preview.
- * - Does not claim stability until tested.
+ * - Adds visible harvest diagnostics.
+ * - Wraps harvest in try/catch so failures are shown.
+ * - Removes lookbehind regex for browser compatibility.
+ * - Keeps DOCX upload.
+ * - Keeps Source Block Pipeline.
+ * - Keeps Phase 3 mirror prompt preview.
  */
 
 const { useState } = React;
 
-const APP_VERSION = "VERSION: SOURCE BLOCK PIPELINE v0.5.2-BETA";
+const APP_VERSION = "VERSION: SOURCE BLOCK PIPELINE v0.5.3-BETA-DIAGNOSTIC";
 
 function App() {
   const [text, setText] = useState("");
@@ -25,6 +24,7 @@ function App() {
   const [globalTopic, setGlobalTopic] = useState("Chemistry");
   const [mode, setMode] = useState(null);
   const [index, setIndex] = useState(0);
+  const [diagnostics, setDiagnostics] = useState("");
 
   const normalize = (line) => String(line || "").replace(/\s+/g, " ").trim();
 
@@ -50,8 +50,10 @@ function App() {
       const buffer = await file.arrayBuffer();
       const result = await mammoth.extractRawText({ arrayBuffer: buffer });
       setText(result.value || "");
+      setDiagnostics("DOCX loaded. Raw characters: " + String(result.value || "").length);
     } catch (err) {
       console.error("DOCX parse failed:", err);
+      setDiagnostics("DOCX parse failed: " + err.message);
       alert("DOCX parse failed.");
     }
   }
@@ -106,7 +108,9 @@ function App() {
       /^part\s+(\d+|[ivx]+)\s*:/i.test(normalize(line))
     );
 
-    return partIndex >= 0 ? lines.slice(partIndex + 1) : lines;
+    if (partIndex >= 0) return lines.slice(partIndex + 1);
+
+    return lines;
   }
 
   function isLikelyAnswerGridStart(lines, startIndex) {
@@ -142,6 +146,15 @@ function App() {
     return stem.length >= 2 ? { stem, answer } : null;
   }
 
+  function hasChoiceMarker(value) {
+    return /(^|\s)[A-Ea-e][.)](\s|$)/.test(value);
+  }
+
+  function detectChoiceCount(rawText) {
+    const matches = rawText.match(/(^|\s)[A-Ea-e][.)](\s|$)/g);
+    return matches ? matches.length : 0;
+  }
+
   function isQuestionStart(lines, i, started) {
     const line = lines[i];
 
@@ -157,13 +170,9 @@ function App() {
       /\?/.test(nearby) ||
       /\b(which|what|calculate|determine|identify|explain|select|write|draw|complete|classify|use|match|conclusion)\b/i.test(nearby) ||
       /_{3,}|☐/.test(nearby) ||
-      /(^|\s)[A-Ea-e][.)](?=\s|$)/.test(nearby) ||
+      hasChoiceMarker(nearby) ||
       detectEndLineAnswer(line)
     );
-  }
-
-  function detectChoiceCount(rawText) {
-    return [...rawText.matchAll(/(^|\s)[A-Ea-e][.)](?=\s|$)/g)].length;
   }
 
   function detectType(rawText, choiceCount) {
@@ -185,93 +194,122 @@ function App() {
   }
 
   function harvest() {
-    const base = extractAnswerKey(cleanText(text));
+    try {
+      const cleanedInput = cleanText(text);
 
-    const allLines = base.cleaned
-      .split("\n")
-      .map(line => line.trim())
-      .filter(Boolean);
-
-    const assessmentLines = trimBeforeAssessmentStart(allLines);
-
-    const groups = [];
-    let current = null;
-    let started = false;
-
-    for (let i = 0; i < assessmentLines.length; i++) {
-      const line = assessmentLines[i];
-
-      if (isLikelyAnswerGridStart(assessmentLines, i)) break;
-
-      if (isHeader(line)) {
-        if (current) groups.push(current);
-        current = null;
-        continue;
+      if (!cleanedInput) {
+        setDiagnostics("Harvest stopped: no text loaded.");
+        alert("No text loaded.");
+        return;
       }
 
-      if (isQuestionStart(assessmentLines, i, started)) {
-        started = true;
-        if (current) groups.push(current);
-        current = [line];
-      } else if (current) {
-        current.push(line);
-      }
-    }
+      const base = extractAnswerKey(cleanedInput);
 
-    if (current) groups.push(current);
+      const allLines = base.cleaned
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean);
 
-    const seen = new Set();
+      const assessmentLines = trimBeforeAssessmentStart(allLines);
 
-    const processed = groups.map(lines => {
-      const rawText = lines.join("\n");
-      const sourceNumber = String(lines[0] || "").match(/^\s*(\d{1,3})[.)]/)?.[1] || "?";
-      const duplicate = seen.has(sourceNumber);
-      seen.add(sourceNumber);
+      const groups = [];
+      let current = null;
+      let started = false;
+      let stoppedAtGrid = false;
 
-      const choiceCount = detectChoiceCount(rawText);
-      const detectedType = detectType(rawText, choiceCount);
-      const endLineAnswer = detectEndLineAnswer(rawText);
+      for (let i = 0; i < assessmentLines.length; i++) {
+        const line = assessmentLines[i];
 
-      const answerHint =
-        base.answerKey[sourceNumber] ||
-        endLineAnswer?.answer ||
-        null;
-
-      const status = duplicate
-        ? "DUPLICATE"
-        : detectedType === "VISUAL_REQUIRED"
-          ? "NEEDS_GRAPHIC"
-          : "READY_TO_MIRROR";
-
-      return {
-        sourceNumber,
-        detectedType,
-        status,
-        rawText,
-        answerHint,
-        choiceCount,
-        mirrorPayload: {
-          intent: "Mirror assessment item",
-          topicHint: globalTopic,
-          source: rawText,
-          originalNumber: sourceNumber,
-          originalType: detectedType,
-          answerHint,
-          constraints: {
-            preserveConcept: true,
-            preserveDOK: true,
-            preserveQuestionType: true,
-            cleanStudentReady: true,
-            doNotUseOutsideConcepts: true,
-            flagIfAmbiguousOrIncomplete: true
-          }
+        if (isLikelyAnswerGridStart(assessmentLines, i)) {
+          stoppedAtGrid = true;
+          break;
         }
-      };
-    });
 
-    setBlocks(processed);
-    setIndex(0);
-    setMode("Dashboard");
+        if (isHeader(line)) {
+          if (current) groups.push(current);
+          current = null;
+          continue;
+        }
+
+        if (isQuestionStart(assessmentLines, i, started)) {
+          started = true;
+          if (current) groups.push(current);
+          current = [line];
+        } else if (current) {
+          current.push(line);
+        }
+      }
+
+      if (current) groups.push(current);
+
+      const seen = new Set();
+
+      const processed = groups.map(lines => {
+        const rawText = lines.join("\n");
+        const sourceNumber = String(lines[0] || "").match(/^\s*(\d{1,3})[.)]/)?.[1] || "?";
+        const duplicate = seen.has(sourceNumber);
+        seen.add(sourceNumber);
+
+        const choiceCount = detectChoiceCount(rawText);
+        const detectedType = detectType(rawText, choiceCount);
+        const endLineAnswer = detectEndLineAnswer(rawText);
+
+        const answerHint =
+          base.answerKey[sourceNumber] ||
+          endLineAnswer?.answer ||
+          null;
+
+        const status = duplicate
+          ? "DUPLICATE"
+          : detectedType === "VISUAL_REQUIRED"
+            ? "NEEDS_GRAPHIC"
+            : "READY_TO_MIRROR";
+
+        return {
+          sourceNumber,
+          detectedType,
+          status,
+          rawText,
+          answerHint,
+          choiceCount,
+          mirrorPayload: {
+            intent: "Mirror assessment item",
+            topicHint: globalTopic,
+            source: rawText,
+            originalNumber: sourceNumber,
+            originalType: detectedType,
+            answerHint,
+            constraints: {
+              preserveConcept: true,
+              preserveDOK: true,
+              preserveQuestionType: true,
+              cleanStudentReady: true,
+              doNotUseOutsideConcepts: true,
+              flagIfAmbiguousOrIncomplete: true
+            }
+          }
+        };
+      });
+
+      setBlocks(processed);
+      setIndex(0);
+      setMode("Dashboard");
+
+      setDiagnostics(
+        "Harvest complete. Raw lines: " +
+        allLines.length +
+        " | Assessment lines: " +
+        assessmentLines.length +
+        " | Blocks: " +
+        processed.length +
+        " | Grid stopped: " +
+        (stoppedAtGrid ? "yes" : "no")
+      );
+    } catch (err) {
+      console.error("Harvest failed:", err);
+      setDiagnostics("Harvest failed: " + err.message);
+      alert("Harvest failed. Check diagnostics.");
+    }
   }
 
   function generateMirrorPrompt(block) {
@@ -331,6 +369,16 @@ ${JSON.stringify(payload, null, 2)}
 
     React.createElement("h1", { style: { color: "#007bff" } }, "LearnFlow Phase 3"),
     React.createElement("p", { style: { fontSize: "0.8rem", color: "#666" } }, APP_VERSION),
+
+    diagnostics && React.createElement("div", {
+      style: {
+        background: "#fff8e1",
+        border: "1px solid #f0c36d",
+        padding: "10px",
+        marginBottom: "15px",
+        fontSize: "0.9rem"
+      }
+    }, diagnostics),
 
     !mode && React.createElement("div", null,
       React.createElement("input", {
